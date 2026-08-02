@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ModelValidator.Cli/ModelValidator.Cli.csproj" />
+    <Project Path="src/ModelValidator.Core/ModelValidator.Core.csproj" />
+    <Project Path="src/ModelValidator.Execution/ModelValidator.Execution.csproj" />
+    <Project Path="src/ModelValidator.Reporting/ModelValidator.Reporting.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ModelValidator.Core.Tests/ModelValidator.Core.Tests.csproj" />
+    <Project Path="tests/ModelValidator.Execution.Tests/ModelValidator.Execution.Tests.csproj" />
+    <Project Path="tests/ModelValidator.IntegrationTests/ModelValidator.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

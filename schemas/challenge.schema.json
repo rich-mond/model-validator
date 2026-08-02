@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-validator.local/schemas/challenge.schema.json",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "challengeId",
+    "challengeVersion",
+    "title",
+    "prompt",
+    "workspace",
+    "validation",
+    "limits"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "challengeId": { "type": "string", "minLength": 1 },
+    "challengeVersion": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "prompt": {
+      "type": "object",
+      "required": [ "path", "sha256" ],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "required": [ "type", "path", "sha256", "baseCommit" ],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "git-bundle" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "baseCommit": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}([A-Fa-f0-9]{24})?$" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": [ "image", "workspacePath", "assertions" ],
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "required": [ "type" ],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": [ "build", "existing" ] },
+            "contextPath": { "type": [ "string", "null" ] },
+            "containerfilePath": { "type": [ "string", "null" ] },
+            "contextSha256": { "type": [ "string", "null" ], "pattern": "^[A-Fa-f0-9]{64}$" },
+            "reference": { "type": [ "string", "null" ] }
+          }
+        },
+        "workspacePath": { "type": "string", "minLength": 1 },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [ "id", "title", "classification", "required", "command", "workingDirectory", "timeoutSeconds" ],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "classification": { "enum": [ "requirement", "regression" ] },
+              "required": { "type": "boolean" },
+              "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+              "workingDirectory": { "type": "string", "minLength": 1 },
+              "timeoutSeconds": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": [ "targetTimeoutSeconds", "validatorTimeoutSeconds" ],
+      "additionalProperties": false,
+      "properties": {
+        "targetTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "validatorTimeoutSeconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

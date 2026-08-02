@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "planId": "sample-comparison",
+  "challengePath": "../challenge-pack",
+  "targets": [
+    "./targets/target-a.json",
+    "./targets/target-b.json"
+  ],
+  "attemptsPerTarget": 1,
+  "outputPath": "./runs/sample-comparison",
+  "execution": {
+    "maximumParallelTargets": 1,
+    "retainWorkspaces": true
+  }
+}

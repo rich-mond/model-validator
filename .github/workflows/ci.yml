@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore ModelValidator.slnx --locked-mode
+      - name: Build
+        run: dotnet build ModelValidator.slnx -c Release --no-restore
+      - name: Test
+        run: dotnet test ModelValidator.slnx -c Release --no-build
+      - name: Dependency inventory
+        run: dotnet list ModelValidator.slnx package --include-transitive
+      - name: Vulnerability scan
+        run: dotnet list ModelValidator.slnx package --vulnerable --include-transitive

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "targetId": "sample-process-target",
+  "displayName": "Sample process target",
+  "agent": {
+    "name": "sample-agent",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "sample-model",
+    "version": "1.0.0",
+    "provider": "sample-provider"
+  },
+  "adapter": {
+    "mode": "process",
+    "image": null,
+    "command": [
+      "sample-adapter"
+    ],
+    "workspacePath": "/workspace",
+    "promptPath": "/input/prompt.md",
+    "outputPath": "/output"
+  },
+  "environment": {
+    "allowedVariables": [],
+    "secretVariables": []
+  },
+  "limits": {
+    "cpuCount": 2,
+    "memoryBytes": 2147483648,
+    "pids": 128
+  }
+}

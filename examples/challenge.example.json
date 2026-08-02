@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "challengeId": "sample-language-agnostic-challenge",
+  "challengeVersion": "1.0.0",
+  "title": "Sample challenge contract",
+  "prompt": {
+    "path": "prompt.md",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "workspace": {
+    "type": "git-bundle",
+    "path": "workspace/starter.bundle",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "baseCommit": "2222222222222222222222222222222222222222"
+  },
+  "validation": {
+    "image": {
+      "type": "existing",
+      "contextPath": null,
+      "containerfilePath": null,
+      "contextSha256": null,
+      "reference": "example.invalid/validator@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "workspacePath": "/candidate",
+    "assertions": [
+      {
+        "id": "requested-behaviour",
+        "title": "Requested behaviour is implemented",
+        "classification": "requirement",
+        "required": true,
+        "command": [
+          "/validator/run",
+          "requested-behaviour"
+        ],
+        "workingDirectory": "/candidate",
+        "timeoutSeconds": 120
+      }
+    ]
+  },
+  "limits": {
+    "targetTimeoutSeconds": 1800,
+    "validatorTimeoutSeconds": 600
+  }
+}
