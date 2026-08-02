@@ -1,0 +1,40 @@
+name: GitFlow Policy
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  gitflow-policy:
+    name: gitflow-policy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Enforce branch flow
+        shell: bash
+        run: |
+          base="${{ github.base_ref }}"
+          head="${{ github.head_ref }}"
+
+          if [[ "$base" == "develop" ]]; then
+            if [[ "$head" == feature/* ]]; then
+              exit 0
+            fi
+
+            echo "PRs into develop must come from feature/* branches. Got: $head -> $base"
+            exit 1
+          fi
+
+          if [[ "$base" == "main" ]]; then
+            if [[ "$head" == "develop" || "$head" == release/* || "$head" == hotfix/* ]]; then
+              exit 0
+            fi
+
+            echo "PRs into main must come from develop, release/* or hotfix/*. Got: $head -> $base"
+            exit 1
+          fi
+
+          echo "Unsupported PR base branch: $base"
+          exit 1

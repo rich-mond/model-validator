@@ -13,6 +13,7 @@ coverage.cobertura.xml
 dependency-inventory.txt
 pack-verification.json
 IMPLEMENTATION_EVIDENCE.md
+AGENTS.md
 *.user
 *.suo
 .vs/
