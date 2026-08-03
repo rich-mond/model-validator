@@ -313,22 +313,22 @@ public static class Program
             await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, DisposableBranchName(plan.PlanId, targetId, attemptIndex)).ConfigureAwait(false);
             string promptCopy = Path.Combine(adapterOutput, "prompt.md");
             File.Copy(promptPath, promptCopy, overwrite: true);
+            string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, promptPath, target.DisplayName).ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine($"Attempt {attemptIndex}/{attempts} is ready.");
             Console.WriteLine($"Workspace: {workspace}");
-            Console.WriteLine($"Prompt: {promptCopy}");
+            Console.WriteLine($"Task file: {workspaceTaskPath}");
             if (openTool is not null)
             {
-                await TryOpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
+                await TryOpenWorkspaceAsync(openTool, workspace, workspaceTaskPath).ConfigureAwait(false);
             }
 
             Console.WriteLine();
             Console.WriteLine("Next steps:");
-            Console.WriteLine("1. Use your chosen model or coding-agent UI against the workspace above.");
-            Console.WriteLine("2. Give it the prompt file above.");
-            Console.WriteLine("3. Let it edit only that workspace.");
-            Console.WriteLine("4. Return here and press Enter when the agent has finished.");
+            Console.WriteLine("1. Use your chosen model or coding-agent UI in the workspace above.");
+            Console.WriteLine("2. Ask it to follow AGENTS.md or the task file shown above.");
+            Console.WriteLine("3. Return here and press Enter when the agent has finished.");
             DateTimeOffset startedUtc = clock.UtcNow;
             long started = clock.Timestamp;
             _ = Console.ReadLine();
@@ -364,6 +364,52 @@ public static class Program
         Console.WriteLine($"Run complete: {outputRoot}");
         PrintConsoleSummary(report, outputRoot);
         return 0;
+    }
+
+    private static async Task<string> WriteInteractiveWorkspaceInstructionsAsync(string workspace, string promptPath, string displayName)
+    {
+        string prompt = await File.ReadAllTextAsync(promptPath).ConfigureAwait(false);
+        string taskPath = Path.Combine(workspace, "MODEL_VALIDATOR_TASK.md");
+        string agentsPath = Path.Combine(workspace, "AGENTS.md");
+        string taskContent = $"""
+            # Model Validator Task
+
+            Target: {displayName}
+
+            You are working inside a prepared benchmark workspace. Implement the task below by editing files in this workspace only.
+
+            Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`; they are local benchmark instructions and are excluded from candidate scoring.
+
+            ## Task
+
+            {prompt}
+            """;
+        string agentsContent = $"""
+            # Model Validator Workspace Instructions
+
+            This is a prepared benchmark workspace.
+
+            - Read `MODEL_VALIDATOR_TASK.md`.
+            - Implement the requested task by editing this workspace only.
+            - Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
+            - Do not add repository remotes or credentials.
+            - When finished, stop. The human operator will return to the benchmark terminal and press Enter to validate.
+            """;
+
+        await File.WriteAllTextAsync(taskPath, taskContent).ConfigureAwait(false);
+        await File.WriteAllTextAsync(agentsPath, agentsContent).ConfigureAwait(false);
+        string excludePath = Path.Combine(workspace, ".git", "info", "exclude");
+        string existingExclude = File.Exists(excludePath) ? await File.ReadAllTextAsync(excludePath).ConfigureAwait(false) : string.Empty;
+        string[] requiredExcludes = ["AGENTS.md", "MODEL_VALIDATOR_TASK.md"];
+        List<string> additions = requiredExcludes
+            .Where(entry => !existingExclude.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(entry, StringComparer.Ordinal))
+            .ToList();
+        if (additions.Count > 0)
+        {
+            await File.AppendAllTextAsync(excludePath, Environment.NewLine + string.Join(Environment.NewLine, additions) + Environment.NewLine).ConfigureAwait(false);
+        }
+
+        return taskPath;
     }
 
     private static async Task TryOpenWorkspaceAsync(string openTool, string workspace, string promptPath)
@@ -462,15 +508,16 @@ public static class Program
         Directory.CreateDirectory(output);
         string promptCopy = Path.Combine(output, "prompt.md");
         File.Copy(prompt, promptCopy, overwrite: true);
+        string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, prompt, "manual target").ConfigureAwait(false);
 
         if (openTool is not null)
         {
-            await TryOpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
+            await TryOpenWorkspaceAsync(openTool, workspace, workspaceTaskPath).ConfigureAwait(false);
         }
 
         Console.WriteLine("Manual benchmark workspace is ready.");
         Console.WriteLine($"Workspace: {workspace}");
-        Console.WriteLine($"Prompt: {promptCopy}");
+        Console.WriteLine($"Task file: {workspaceTaskPath}");
         Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to continue.");
         _ = Console.ReadLine();
         JsonIO.Save(Path.Combine(output, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));

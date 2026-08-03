@@ -63,9 +63,9 @@ Set-Location .\model-validator
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --open vscode --output ..\model-validator-runs\order-normalization-vscode
 ```
 
-When VS Code opens, choose the model from the extension or UI you normally use, run it against the prepared workspace, then return to the terminal and press Enter. The validator runs after that.
+When VS Code opens, choose the model from the extension or UI you normally use and run it against the prepared workspace. The workspace includes `AGENTS.md` and `MODEL_VALIDATOR_TASK.md`, so the model can read the task without you copying text from another location. Return to the terminal and press Enter only after the model has finished.
 
-The command prints the generated target/plan paths, the candidate workspace, the prompt path and clear next steps. It should not validate before you press Enter in interactive mode. If VS Code cannot be opened automatically, the command prints the workspace and prompt paths so you can open them manually.
+The command prints the generated target/plan paths, the candidate workspace, the task file path and clear next steps. It should not validate before you press Enter in interactive mode. If VS Code cannot be opened automatically, the command prints the workspace and task file paths so you can open them manually.
 
 You can also run without opening an editor:
 
@@ -73,7 +73,7 @@ You can also run without opening an editor:
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --output ..\model-validator-runs\order-normalization-manual
 ```
 
-The command prints the workspace and prompt paths. Use any model or coding-agent UI to edit the workspace, then press Enter to score the result.
+The command prints the workspace and task file paths. Use any model or coding-agent UI to edit the workspace, then press Enter to score the result.
 
 Outputs are written under the `--output` directory:
 
