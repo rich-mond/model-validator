@@ -21,7 +21,17 @@ That single command:
 - captures the candidate patch;
 - runs hidden validator assertions;
 - writes `comparison.md`, `comparison.json` and per-attempt evidence;
-- prints the score report to the console.
+- prints a console-friendly score summary.
+
+In interactive mode the command pauses after preparing the attempt. It prints the workspace path and prompt path, then waits for you to press Enter. While it is waiting:
+
+1. Use the opened VS Code window, or open the printed workspace manually.
+2. Choose the model in your VS Code extension or coding-agent UI.
+3. Give the model the printed prompt file.
+4. Let it edit only the prepared workspace.
+5. Return to the terminal and press Enter to validate the result.
+
+If `--open vscode` cannot find the VS Code launcher, the benchmark does not crash. It prints the workspace and prompt paths so you can open them manually.
 
 Automated CLI mode:
 
@@ -130,8 +140,15 @@ A run writes to the benchmark plan output directory:
 
 These outputs are generated artifacts and should not be committed back to either repository.
 
-To print the score again later:
+To print the console score summary again later:
 
 ```powershell
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- results --run ..\model-validator-runs\order-normalization-vscode
+```
+
+To print the persisted Markdown or JSON reports instead:
+
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- report --run ..\model-validator-runs\order-normalization-vscode --format markdown
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- report --run ..\model-validator-runs\order-normalization-vscode --format json
 ```
