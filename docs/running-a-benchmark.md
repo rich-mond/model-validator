@@ -2,9 +2,42 @@
 
 This document explains how a real benchmark run works across the framework repository and a separate challenge repository.
 
-## Inputs
+## Quick Run
 
-A run needs three inputs:
+Most users should start with `benchmark`.
+
+```powershell
+cd C:\Work\model-validator
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent codex --model gpt-5 --output C:\Work\model-validator-runs\codex-gpt5-order-normalization
+```
+
+That single command:
+
+- verifies and materialises the challenge;
+- generates the target configuration and benchmark plan under `<output>\_generated`;
+- starts the selected coding-agent CLI in the candidate workspace;
+- captures the candidate patch;
+- runs hidden validator assertions;
+- writes `comparison.md`, `comparison.json` and per-attempt evidence.
+
+Built-in presets:
+
+| Agent | Command Model Validator Runs |
+| --- | --- |
+| `codex` | `codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>` |
+| `claude` | `claude -p <prompt>` |
+
+Custom CLI shape:
+
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\dotnet\idempotent-processing --agent custom --provider openai --model gpt-5 --output C:\Work\model-validator-runs\custom-idempotency -- my-agent run --model {model} --prompt-file {promptPath}
+```
+
+Supported placeholders after `--` are `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}`.
+
+## Explicit Inputs
+
+For advanced scripted runs, the lower-level `run --plan` command takes three inputs:
 
 - A challenge pack directory, for example `../model-validator-challenges/dotnet/idempotent-processing`.
 - One or more target configuration JSON files.
@@ -29,17 +62,15 @@ For each target attempt, the framework:
 
 ## What the Agent Does
 
-The framework does not talk to model APIs directly. A target adapter does that.
+The framework does not talk to model APIs directly. In the quick path, the built-in local-command adapter starts the selected agent CLI for you.
 
-For example, a Codex adapter could:
+For example, the Codex preset runs:
 
-1. Read the prompt file path supplied by the framework.
-2. Start Codex against the supplied workspace.
-3. Let Codex edit files in that workspace.
-4. Exit when Codex is done or when the timeout is reached.
-5. Optionally write usage metrics to `usage.json`.
+```text
+codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>
+```
 
-The same pattern works for another coding system, such as Claude Code or a local model-backed agent. The adapter is the boundary between Model Validator and the evaluated agent.
+The same pattern works for another coding system when its CLI can edit the current working directory. Use the custom command form when the built-in preset is not the right shape.
 
 ## What Validation Means
 
