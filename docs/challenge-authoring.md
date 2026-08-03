@@ -20,7 +20,7 @@ A challenge pack supplies:
 - oracle patch;
 - counterexamples and expected failed assertions.
 
-The framework verifies the prompt digest, bundle digest, base commit and validator context digest before execution. Validators and self-checks are declared as executable argument arrays, never shell command strings. Self-checks are copied into the generated workspace task so the target agent knows what local build or test command to run before stopping.
+The framework verifies the prompt digest, bundle digest, base commit and validator context digest before execution. Validators and self-checks are declared as executable argument arrays, never shell command strings. Self-checks are copied into the generated workspace task as exact required commands. Target agents must run those commands after editing and must not substitute other checks.
 
 ## Repository Boundary
 
