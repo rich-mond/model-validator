@@ -44,13 +44,15 @@ public sealed record ChallengeManifest(
     PromptSpec Prompt,
     WorkspaceSpec Workspace,
     ValidationSpec Validation,
-    ChallengeLimits Limits);
+    ChallengeLimits Limits,
+    IReadOnlyList<SelfCheckSpec>? SelfChecks = null);
 
 public sealed record PromptSpec(string Path, string Sha256);
 public sealed record WorkspaceSpec(string Type, string Path, string Sha256, string BaseCommit);
 public sealed record ValidationSpec(ValidatorImageSpec Image, string WorkspacePath, IReadOnlyList<AssertionSpec> Assertions);
 public sealed record ValidatorImageSpec(string Type, string? ContextPath, string? ContainerfilePath, string? ContextSha256, string? Reference);
 public sealed record AssertionSpec(string Id, string Title, string Classification, bool Required, IReadOnlyList<string> Command, string WorkingDirectory, int TimeoutSeconds);
+public sealed record SelfCheckSpec(string Id, string Title, IReadOnlyList<string> Command, string WorkingDirectory, int TimeoutSeconds);
 public sealed record ChallengeLimits(int TargetTimeoutSeconds, int ValidatorTimeoutSeconds);
 
 public sealed record TargetConfiguration(
@@ -327,6 +329,23 @@ public static class ContractValidator
             Require(assertion.TimeoutSeconds > 0, $"{path}.timeoutSeconds", "must be positive");
         }
 
+        IReadOnlyList<SelfCheckSpec> selfChecks = manifest.SelfChecks ?? [];
+        foreach (IGrouping<string, SelfCheckSpec> duplicate in selfChecks.GroupBy(c => c.Id).Where(g => g.Count() > 1))
+        {
+            issues.Add(new("selfChecks", $"duplicate self-check id '{duplicate.Key}'"));
+        }
+
+        for (int i = 0; i < selfChecks.Count; i++)
+        {
+            SelfCheckSpec check = selfChecks[i];
+            string path = $"selfChecks[{i}]";
+            Require(!string.IsNullOrWhiteSpace(check.Id), $"{path}.id", "is required");
+            Require(!string.IsNullOrWhiteSpace(check.Title), $"{path}.title", "is required");
+            Require(check.Command.Count > 0 && check.Command.All(c => !string.IsNullOrWhiteSpace(c)), $"{path}.command", "must be a non-empty argument array");
+            Require(!string.IsNullOrWhiteSpace(check.WorkingDirectory), $"{path}.workingDirectory", "is required");
+            Require(check.TimeoutSeconds > 0, $"{path}.timeoutSeconds", "must be positive");
+        }
+
         if (manifest.Validation.Image.Type == "build")
         {
             Require(!string.IsNullOrWhiteSpace(manifest.Validation.Image.ContextPath), "validation.image.contextPath", "is required for build images");
@@ -430,6 +449,7 @@ public static class Fingerprints
                 ImageId = validatorImageId
             },
             Assertions = manifest.Validation.Assertions.Select(a => new { a.Id, a.Classification, a.Required, a.Command, a.WorkingDirectory, a.TimeoutSeconds }).ToArray(),
+            SelfChecks = (manifest.SelfChecks ?? []).Select(c => new { c.Id, c.Command, c.WorkingDirectory, c.TimeoutSeconds }).ToArray(),
             manifest.Limits.TargetTimeoutSeconds,
             manifest.Limits.ValidatorTimeoutSeconds,
             execution.MaximumParallelTargets,

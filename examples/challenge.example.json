@@ -37,6 +37,18 @@
       }
     ]
   },
+  "selfChecks": [
+    {
+      "id": "local-smoke-test",
+      "title": "Run the starter workspace smoke test",
+      "command": [
+        "example-test-runner",
+        "test"
+      ],
+      "workingDirectory": ".",
+      "timeoutSeconds": 120
+    }
+  ],
   "limits": {
     "targetTimeoutSeconds": 1800,
     "validatorTimeoutSeconds": 600

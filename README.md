@@ -63,7 +63,7 @@ Set-Location .\model-validator
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --open vscode --output ..\model-validator-runs\order-normalization-vscode
 ```
 
-When VS Code opens, choose the model from the extension or UI you normally use and run it against the prepared workspace. The workspace includes `AGENTS.md` and `MODEL_VALIDATOR_TASK.md`, so the model can read the task without you copying text from another location. `AGENTS.md` also tells the model to run available workspace tests or checks before stopping. Return to the terminal and press Enter only after the model has finished.
+When VS Code opens, choose the model from the extension or UI you normally use and run it against the prepared workspace. The workspace includes `AGENTS.md` and `MODEL_VALIDATOR_TASK.md`, so the model can read the task without you copying text from another location. The task file lists required public self-check commands from the challenge pack, and `AGENTS.md` tells the model to run them before stopping. Return to the terminal and press Enter only after the model has finished.
 
 The CLI then asks which model was actually used. For example, if Copilot Chat reports `Raptor mini`, record the model as `raptor mini` and leave version blank if the UI does not show one. The values are stored in the generated target JSON and the attempt's `adapter-output/interactive-metadata.json`.
 
