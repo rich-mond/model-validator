@@ -382,18 +382,13 @@ public static class Program
     private static TargetConfiguration ReadInteractiveTargetMetadata(TargetConfiguration target)
     {
         Console.WriteLine();
-        Console.WriteLine("Record the interactive target metadata. Leave blank to keep the value in brackets.");
-        string agentName = PromptWithDefault("Agent/tool", target.Agent.Name);
-        string agentVersion = PromptWithDefault("Agent/tool version", target.Agent.Version);
-        string provider = PromptWithDefault("Model provider", target.Model.Provider);
+        Console.WriteLine("Record the model used. Leave blank to keep the value in brackets.");
         string modelName = PromptWithDefault("Model", target.Model.Name);
         string modelVersion = PromptWithDefault("Model version", target.Model.Version == target.Model.Name ? modelName : target.Model.Version);
-        string displayName = PromptWithDefault("Display name", $"{agentName} {modelName}");
         return target with
         {
-            DisplayName = displayName,
-            Agent = new(agentName, agentVersion),
-            Model = new(modelName, modelVersion, provider)
+            DisplayName = $"{target.Agent.Name} {modelName}",
+            Model = new(modelName, modelVersion, target.Model.Provider)
         };
     }
 
