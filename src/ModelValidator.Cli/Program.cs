@@ -303,6 +303,7 @@ public static class Program
         string validatorImage = await validators.ResolveImageAsync(challengeRoot, challenge.Validation.Image).ConfigureAwait(false);
         string fingerprint = Fingerprints.Challenge(challenge, Hashing.Sha256File(Path.Combine(challengeRoot, "challenge.json")), validatorImage, plan.Execution);
         List<AttemptResult> results = new();
+        TargetConfiguration recordedTarget = target;
 
         for (int attemptIndex = 1; attemptIndex <= attempts; attemptIndex++)
         {
@@ -328,10 +329,22 @@ public static class Program
             Console.WriteLine("Next steps:");
             Console.WriteLine("1. Use your chosen model or coding-agent UI in the workspace above.");
             Console.WriteLine("2. Ask it to follow AGENTS.md or the task file shown above.");
-            Console.WriteLine("3. Return here and press Enter when the agent has finished.");
+            Console.WriteLine("3. Let it run the workspace's available tests or checks when they exist.");
+            Console.WriteLine("4. Return here and press Enter when the agent has finished.");
             DateTimeOffset startedUtc = clock.UtcNow;
             long started = clock.Timestamp;
             _ = Console.ReadLine();
+            if (attemptIndex == 1)
+            {
+                recordedTarget = ReadInteractiveTargetMetadata(target);
+                JsonIO.Save(targetPath, recordedTarget);
+            }
+
+            JsonIO.Save(Path.Combine(adapterOutput, "interactive-metadata.json"), new
+            {
+                recordedTarget.Agent,
+                recordedTarget.Model
+            });
             Console.WriteLine("Validating candidate changes...");
             DateTimeOffset finishedUtc = clock.UtcNow;
             TimeSpan targetDuration = clock.ElapsedSince(started);
@@ -352,7 +365,7 @@ public static class Program
 
             TimeSpan validationDuration = clock.ElapsedSince(validationStart);
             CoverageResult coverage = Metrics.CalculateCoverage(assertionResults);
-            AttemptResult attempt = new(Protocol.Version, plan.PlanId, targetId, attemptIndex, fingerprint, false, startedUtc, finishedUtc, targetDuration, captureDuration, validationDuration, clock.ElapsedSince(started), "completed", assertionResults, coverage, new(null, null, null, null, null, null, null), capture.Metrics, target.Hardware ?? new(Environment.OSVersion.Platform.ToString(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(), Environment.ProcessorCount, null), new Dictionary<string, string> { ["candidate.patch"] = Hashing.Sha256File(Path.Combine(attemptRoot, "candidate.patch")) });
+            AttemptResult attempt = new(Protocol.Version, plan.PlanId, targetId, attemptIndex, fingerprint, false, startedUtc, finishedUtc, targetDuration, captureDuration, validationDuration, clock.ElapsedSince(started), "completed", assertionResults, coverage, new(null, null, null, null, null, null, null), capture.Metrics, recordedTarget.Hardware ?? new(Environment.OSVersion.Platform.ToString(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(), Environment.ProcessorCount, null), new Dictionary<string, string> { ["candidate.patch"] = Hashing.Sha256File(Path.Combine(attemptRoot, "candidate.patch")) });
             JsonIO.Save(Path.Combine(attemptRoot, "result.json"), attempt);
             results.Add(attempt);
         }
@@ -364,6 +377,31 @@ public static class Program
         Console.WriteLine($"Run complete: {outputRoot}");
         PrintConsoleSummary(report, outputRoot);
         return 0;
+    }
+
+    private static TargetConfiguration ReadInteractiveTargetMetadata(TargetConfiguration target)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Record the interactive target metadata. Leave blank to keep the value in brackets.");
+        string agentName = PromptWithDefault("Agent/tool", target.Agent.Name);
+        string agentVersion = PromptWithDefault("Agent/tool version", target.Agent.Version);
+        string provider = PromptWithDefault("Model provider", target.Model.Provider);
+        string modelName = PromptWithDefault("Model", target.Model.Name);
+        string modelVersion = PromptWithDefault("Model version", target.Model.Version == target.Model.Name ? modelName : target.Model.Version);
+        string displayName = PromptWithDefault("Display name", $"{agentName} {modelName}");
+        return target with
+        {
+            DisplayName = displayName,
+            Agent = new(agentName, agentVersion),
+            Model = new(modelName, modelVersion, provider)
+        };
+    }
+
+    private static string PromptWithDefault(string label, string defaultValue)
+    {
+        Console.Write($"{label} [{defaultValue}]: ");
+        string? value = Console.ReadLine();
+        return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
     }
 
     private static async Task<string> WriteInteractiveWorkspaceInstructionsAsync(string workspace, string promptPath, string displayName)
@@ -392,6 +430,8 @@ public static class Program
             - Read `MODEL_VALIDATOR_TASK.md`.
             - Implement the requested task by editing this workspace only.
             - Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
+            - Run the project's available tests or checks before you finish, when the workspace provides them.
+            - If a check fails, keep working until it passes or record the exact blocker.
             - Do not add repository remotes or credentials.
             - When finished, stop. The human operator will return to the benchmark terminal and press Enter to validate.
             """;
