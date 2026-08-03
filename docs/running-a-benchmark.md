@@ -29,8 +29,8 @@ In interactive mode the command pauses after preparing the attempt. It prints th
 
 1. Use the opened VS Code window, or open the printed workspace manually.
 2. Choose the model in your VS Code extension or coding-agent UI.
-3. Ask the model to follow `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
-4. Let it run the required public self-check commands listed in the task file.
+3. Send exactly: `read AGENTS.md and follow it`.
+4. Wait until the model reports each required public self-check command and exit code.
 5. Return to the terminal and press Enter to validate the result.
 6. Record the actual model shown by the UI.
 

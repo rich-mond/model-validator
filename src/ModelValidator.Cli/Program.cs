@@ -329,9 +329,9 @@ public static class Program
             Console.WriteLine();
             Console.WriteLine("Next steps:");
             Console.WriteLine("1. Use your chosen model or coding-agent UI in the workspace above.");
-            Console.WriteLine("2. Ask it to follow AGENTS.md or the task file shown above.");
-            Console.WriteLine("3. Let it run the required self-check commands listed in the workspace task file.");
-            Console.WriteLine("4. Return here and press Enter when the agent has finished.");
+            Console.WriteLine("2. Send exactly: read AGENTS.md and follow it");
+            Console.WriteLine("3. Do not press Enter until the agent reports the required self-check command results.");
+            Console.WriteLine("4. Return here and press Enter only after the agent has finished.");
             DateTimeOffset startedUtc = clock.UtcNow;
             long started = clock.Timestamp;
             _ = Console.ReadLine();
@@ -415,6 +415,8 @@ public static class Program
 
             Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`; they are local benchmark instructions and are excluded from candidate scoring.
 
+            You must run every command under `Required Self-Checks` after your edits. Do not skip, replace or reinterpret those commands. Do not finish until each required self-check exits with code 0, unless a command is impossible to run in this workspace; if that happens, report the exact command, exit code and error.
+
             ## Task
 
             {prompt}
@@ -431,8 +433,12 @@ public static class Program
             - Read `MODEL_VALIDATOR_TASK.md`.
             - Implement the requested task by editing this workspace only.
             - Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
-            - Run every command listed under `Required Self-Checks` in `MODEL_VALIDATOR_TASK.md` before you finish.
-            - If a check fails, keep working until it passes or record the exact blocker.
+            - The task is incomplete until every required self-check command has been run after the final code edit.
+            - Run every command listed under `Required Self-Checks` in `MODEL_VALIDATOR_TASK.md` after editing.
+            - Do not skip, replace or reinterpret any required self-check command.
+            - Do not finish until every required self-check exits with code 0.
+            - If a required self-check cannot be run, report the exact command, exit code and error.
+            - In your final response, report each required self-check command and its exit code.
             - Do not add repository remotes or credentials.
             - When finished, stop. The human operator will return to the benchmark terminal and press Enter to validate.
             """;
@@ -457,7 +463,7 @@ public static class Program
     {
         if (selfChecks.Count == 0)
         {
-            return "No challenge-supplied self-check commands are declared. Run the most relevant local build or test command you can identify before finishing.";
+            return "No challenge-supplied self-check commands are declared for this challenge.";
         }
 
         return string.Join(
