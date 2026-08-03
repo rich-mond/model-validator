@@ -17,9 +17,11 @@ That single command:
 - generates the target configuration and benchmark plan under `<output>\_generated`;
 - opens or prints the candidate workspace and prompt;
 - lets you run the model or coding agent from VS Code or another UI;
+- waits until you press Enter in the terminal;
 - captures the candidate patch;
 - runs hidden validator assertions;
-- writes `comparison.md`, `comparison.json` and per-attempt evidence.
+- writes `comparison.md`, `comparison.json` and per-attempt evidence;
+- prints the score report to the console.
 
 Automated CLI mode:
 
@@ -127,3 +129,9 @@ A run writes to the benchmark plan output directory:
 ```
 
 These outputs are generated artifacts and should not be committed back to either repository.
+
+To print the score again later:
+
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- results --run ..\model-validator-runs\order-normalization-vscode
+```

@@ -45,6 +45,13 @@ public static class Program
                 }
             }
 
+            if (args is ["results", "--run", var resultsRunPath])
+            {
+                string markdown = Path.Combine(resultsRunPath, "comparison.md");
+                Console.WriteLine(await File.ReadAllTextAsync(markdown).ConfigureAwait(false));
+                return 0;
+            }
+
             if (args is ["run", "--plan", var runPlanPath])
             {
                 return await RunPlanAsync(runPlanPath).ConfigureAwait(false);
@@ -84,10 +91,13 @@ public static class Program
     {
         string challengeRoot = Path.GetFullPath(challengePath);
         string manifestPath = Path.Combine(challengeRoot, "challenge.json");
+        Console.WriteLine($"Verifying challenge pack: {challengeRoot}");
+        Console.WriteLine("Checking manifest, prompt digest and starter bundle...");
         ChallengeManifest manifest = ConfigurationLoader.LoadChallenge(manifestPath);
         if (Hashing.Sha256File(Path.Combine(challengeRoot, manifest.Prompt.Path)) != manifest.Prompt.Sha256) throw new InvalidOperationException("Prompt digest mismatch.");
         GitWorkspaceManager git = new();
         await git.VerifyBundleAsync(Path.Combine(challengeRoot, manifest.Workspace.Path), manifest.Workspace.Sha256, manifest.Workspace.BaseCommit).ConfigureAwait(false);
+        Console.WriteLine("Building validator image and running calibration checks...");
         ChallengeVerificationResult result = await new ChallengePackVerifier(git).VerifyAsync(challengeRoot).ConfigureAwait(false);
         JsonIO.Save(Path.Combine(challengeRoot, "verification", "pack-verification.json"), result);
         if (result.Diagnostics.Count > 0)
@@ -101,6 +111,10 @@ public static class Program
         }
 
         Console.WriteLine("Challenge pack verified.");
+        Console.WriteLine($"Starter fails required assertion: {result.StarterFailedRequiredAssertion}");
+        Console.WriteLine($"Oracle passes all assertions: {result.OraclePassedAllAssertions}");
+        Console.WriteLine($"Oracle stable across three runs: {result.OracleStableAcrossThreeRuns}");
+        Console.WriteLine($"Counterexamples checked: {result.CounterexampleFailedAssertions.Count}");
         return 0;
     }
 
@@ -140,7 +154,7 @@ public static class Program
                 Directory.CreateDirectory(attemptRoot);
                 long started = clock.Timestamp;
                 DateTimeOffset startedUtc = clock.UtcNow;
-                await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, $"model-validator/{plan.PlanId}/{target.TargetId}").ConfigureAwait(false);
+                await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, DisposableBranchName(plan.PlanId, target.TargetId, attemptIndex)).ConfigureAwait(false);
                 AdapterExecutionRequest adapterRequest = new(target, workspace, promptPath, adapterOutput, challenge.Limits.TargetTimeoutSeconds);
                 AdapterExecutionResult adapterResult = target.Adapter.Mode == "process"
                     ? await adapters.RunProcessAdapterAsync(adapterRequest).ConfigureAwait(false)
@@ -180,8 +194,10 @@ public static class Program
 
         ComparisonReport report = new(Protocol.Version, fingerprint, "compatible", attempts, pairs, Array.Empty<string>());
         JsonIO.Save(Path.Combine(outputRoot, "comparison.json"), report);
-        await File.WriteAllTextAsync(Path.Combine(outputRoot, "comparison.md"), MarkdownReport.Render(report)).ConfigureAwait(false);
+        string markdown = MarkdownReport.Render(report);
+        await File.WriteAllTextAsync(Path.Combine(outputRoot, "comparison.md"), markdown).ConfigureAwait(false);
         Console.WriteLine($"Run complete: {outputRoot}");
+        Console.WriteLine(markdown);
         return 0;
     }
 
@@ -222,7 +238,12 @@ public static class Program
         string agentVersion = options.Value("--agent-version") ?? "unknown";
         string targetId = options.Value("--target-id") ?? Slug($"{agent}-{model}");
         string displayName = options.Value("--display-name") ?? $"{agent} {model}";
-        string[] command = options.Trailing.Count > 0 ? options.Trailing.ToArray() : ManualCommand(options.Value("--open"));
+        if (options.Trailing.Count == 0)
+        {
+            return await RunInteractiveBenchmarkAsync(challengePath, outputPath, targetId, displayName, agent, agentVersion, model, provider, attempts, options.Value("--open")).ConfigureAwait(false);
+        }
+
+        string[] command = options.Trailing.ToArray();
 
         string runRoot = Path.GetFullPath(outputPath);
         string generatedRoot = Path.Combine(runRoot, "_generated");
@@ -255,6 +276,103 @@ public static class Program
         Console.WriteLine($"Generated target: {targetPath}");
         Console.WriteLine($"Generated plan: {planPath}");
         return await RunPlanAsync(planPath).ConfigureAwait(false);
+    }
+
+    private static async Task<int> RunInteractiveBenchmarkAsync(string challengePath, string outputPath, string targetId, string displayName, string agent, string agentVersion, string model, string provider, int attempts, string? openTool)
+    {
+        string challengeRoot = Path.GetFullPath(challengePath);
+        string outputRoot = Path.GetFullPath(outputPath);
+        string generatedRoot = Path.Combine(outputRoot, "_generated");
+        Directory.CreateDirectory(generatedRoot);
+        string targetPath = Path.Combine(generatedRoot, $"{targetId}.target.json");
+        string planPath = Path.Combine(generatedRoot, "benchmark-plan.json");
+        TargetConfiguration target = new("1.0", targetId, displayName, new(agent, agentVersion), new(model, model, provider), new("process", null, ["interactive-ui"], "/workspace", "/input/prompt.md", "/output"), new(DefaultAllowedVariables([]), DefaultSecretVariables(provider, [])), new(2, 2147483648, 128));
+        BenchmarkPlan plan = new("1.0", Slug($"{Path.GetFileName(challengeRoot)}-{targetId}"), challengeRoot, [targetPath], attempts, outputRoot, new(1, true));
+        JsonIO.Save(targetPath, target);
+        JsonIO.Save(planPath, plan);
+        Console.WriteLine($"Generated target: {targetPath}");
+        Console.WriteLine($"Generated plan: {planPath}");
+
+        ChallengeManifest challenge = ConfigurationLoader.LoadChallenge(Path.Combine(challengeRoot, "challenge.json"));
+        JsonIO.Save(Path.Combine(outputRoot, "plan.snapshot.json"), plan);
+        JsonIO.Save(Path.Combine(outputRoot, "challenge.snapshot.json"), challenge);
+        string promptPath = Path.Combine(challengeRoot, challenge.Prompt.Path);
+        GitWorkspaceManager git = new();
+        ValidatorRunner validators = new();
+        SystemClock clock = new();
+        string validatorImage = await validators.ResolveImageAsync(challengeRoot, challenge.Validation.Image).ConfigureAwait(false);
+        string fingerprint = Fingerprints.Challenge(challenge, Hashing.Sha256File(Path.Combine(challengeRoot, "challenge.json")), validatorImage, plan.Execution);
+        List<AttemptResult> results = new();
+
+        for (int attemptIndex = 1; attemptIndex <= attempts; attemptIndex++)
+        {
+            string attemptRoot = Path.Combine(outputRoot, "targets", targetId, $"attempt-{attemptIndex:000}");
+            string workspace = Path.Combine(attemptRoot, "workspace");
+            string adapterOutput = Path.Combine(attemptRoot, "adapter-output");
+            Directory.CreateDirectory(adapterOutput);
+            await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, DisposableBranchName(plan.PlanId, targetId, attemptIndex)).ConfigureAwait(false);
+            string promptCopy = Path.Combine(adapterOutput, "prompt.md");
+            File.Copy(promptPath, promptCopy, overwrite: true);
+
+            Console.WriteLine();
+            Console.WriteLine($"Attempt {attemptIndex}/{attempts} is ready.");
+            Console.WriteLine($"Workspace: {workspace}");
+            Console.WriteLine($"Prompt: {promptCopy}");
+            if (openTool is not null)
+            {
+                await OpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
+            }
+
+            Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to validate.");
+            DateTimeOffset startedUtc = clock.UtcNow;
+            long started = clock.Timestamp;
+            _ = Console.ReadLine();
+            DateTimeOffset finishedUtc = clock.UtcNow;
+            TimeSpan targetDuration = clock.ElapsedSince(started);
+            await File.WriteAllTextAsync(Path.Combine(attemptRoot, "target.stdout.log"), "Interactive target execution completed by user.").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(attemptRoot, "target.stderr.log"), string.Empty).ConfigureAwait(false);
+            JsonIO.Save(Path.Combine(adapterOutput, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));
+
+            long captureStart = clock.Timestamp;
+            var capture = await git.CaptureCandidateAsync(workspace, Path.Combine(attemptRoot, "candidate.patch"), Path.Combine(attemptRoot, "changed-files.json")).ConfigureAwait(false);
+            TimeSpan captureDuration = clock.ElapsedSince(captureStart);
+            long validationStart = clock.Timestamp;
+            List<AssertionRunResult> assertionResults = new();
+            foreach (AssertionSpec assertion in challenge.Validation.Assertions)
+            {
+                string assertionDir = Path.Combine(attemptRoot, "validators", assertion.Id);
+                assertionResults.Add(await validators.RunAssertionAsync(validatorImage, workspace, challenge.Validation.WorkspacePath, assertion, assertionDir).ConfigureAwait(false));
+            }
+
+            TimeSpan validationDuration = clock.ElapsedSince(validationStart);
+            CoverageResult coverage = Metrics.CalculateCoverage(assertionResults);
+            AttemptResult attempt = new(Protocol.Version, plan.PlanId, targetId, attemptIndex, fingerprint, false, startedUtc, finishedUtc, targetDuration, captureDuration, validationDuration, clock.ElapsedSince(started), "completed", assertionResults, coverage, new(null, null, null, null, null, null, null), capture.Metrics, target.Hardware ?? new(Environment.OSVersion.Platform.ToString(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(), Environment.ProcessorCount, null), new Dictionary<string, string> { ["candidate.patch"] = Hashing.Sha256File(Path.Combine(attemptRoot, "candidate.patch")) });
+            JsonIO.Save(Path.Combine(attemptRoot, "result.json"), attempt);
+            results.Add(attempt);
+        }
+
+        ComparisonReport report = new(Protocol.Version, fingerprint, "compatible", results, [], []);
+        JsonIO.Save(Path.Combine(outputRoot, "comparison.json"), report);
+        string markdown = MarkdownReport.Render(report);
+        await File.WriteAllTextAsync(Path.Combine(outputRoot, "comparison.md"), markdown).ConfigureAwait(false);
+        Console.WriteLine($"Run complete: {outputRoot}");
+        Console.WriteLine(markdown);
+        return 0;
+    }
+
+    private static async Task OpenWorkspaceAsync(string openTool, string workspace, string promptPath)
+    {
+        string executable = openTool.ToLowerInvariant() switch
+        {
+            "vscode" or "code" => "code",
+            _ => throw new InvalidOperationException($"Unsupported --open value '{openTool}'. Supported value: vscode.")
+        };
+        Dictionary<string, string?> environment = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value, StringComparer.Ordinal);
+        ProcessResult result = await new ProcessRunner().RunAsync(new(executable, [workspace, promptPath], workspace, environment, TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Could not open '{executable}'. {result.StandardError}{result.StandardOutput}");
+        }
     }
 
     private static async Task<int> RunLocalCommandAdapterAsync(IReadOnlyList<string> args)
@@ -323,15 +441,6 @@ public static class Program
         return 0;
     }
 
-    private static string[] ManualCommand(string? openTool) =>
-        openTool?.ToLowerInvariant() switch
-        {
-            "vscode" or "code" => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}", "--open", "code"],
-            null => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}"],
-            "" => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}"],
-            _ => throw new InvalidOperationException($"Unsupported --open value '{openTool}'. Supported value: vscode.")
-        };
-
     private static string DefaultProvider(string agent) => agent.ToLowerInvariant() switch
     {
         "codex" => "openai",
@@ -371,6 +480,8 @@ public static class Program
         char[] chars = value.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
         return string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
+
+    private static string DisposableBranchName(string planId, string targetId, int attemptIndex) => $"mv-{Hashing.Sha256String($"{planId}:{targetId}:{attemptIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}")[..16]}";
 
     private static void PrintIssues(ValidationResult result)
     {
