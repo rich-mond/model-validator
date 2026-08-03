@@ -15,7 +15,8 @@ That single command:
 
 - verifies and materialises the challenge;
 - generates the target configuration and benchmark plan under `<output>\_generated`;
-- opens or prints the candidate workspace and prompt;
+- writes `AGENTS.md` and `MODEL_VALIDATOR_TASK.md` into the candidate workspace;
+- opens or prints the candidate workspace and task file;
 - lets you run the model or coding agent from VS Code or another UI;
 - waits until you press Enter in the terminal;
 - captures the candidate patch;
@@ -23,15 +24,14 @@ That single command:
 - writes `comparison.md`, `comparison.json` and per-attempt evidence;
 - prints a console-friendly score summary.
 
-In interactive mode the command pauses after preparing the attempt. It prints the workspace path and prompt path, then waits for you to press Enter. While it is waiting:
+In interactive mode the command pauses after preparing the attempt. It prints the workspace path and task file path, then waits for you to press Enter. While it is waiting:
 
 1. Use the opened VS Code window, or open the printed workspace manually.
 2. Choose the model in your VS Code extension or coding-agent UI.
-3. Give the model the printed prompt file.
-4. Let it edit only the prepared workspace.
-5. Return to the terminal and press Enter to validate the result.
+3. Ask the model to follow `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
+4. Return to the terminal and press Enter to validate the result.
 
-If `--open vscode` cannot find the VS Code launcher, the benchmark does not crash. It prints the workspace and prompt paths so you can open them manually.
+If `--open vscode` cannot find the VS Code launcher, the benchmark does not crash. It prints the workspace and task file paths so you can open them manually.
 
 Automated CLI mode:
 
@@ -116,6 +116,8 @@ It does not receive:
 - Git remotes.
 
 Only after target execution ends does the framework run the validator container.
+
+For interactive runs, `AGENTS.md` and `MODEL_VALIDATOR_TASK.md` are copied into the materialised workspace so editor-based agents can consume the task naturally. The framework adds both files to `.git/info/exclude` before candidate capture, so they are local run instructions rather than part of the candidate answer.
 
 ## Outputs
 
