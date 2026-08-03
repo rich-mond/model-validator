@@ -4,33 +4,27 @@ This document explains how a real benchmark run works across the framework repos
 
 ## Quick Run
 
-Most users should start with `benchmark`.
+Most users should start with `benchmark` in interactive mode.
 
 ```powershell
-cd C:\Work\model-validator
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent codex --model gpt-5 --output C:\Work\model-validator-runs\codex-gpt5-order-normalization
+Set-Location .\model-validator
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --open vscode --output ..\model-validator-runs\order-normalization-vscode
 ```
 
 That single command:
 
 - verifies and materialises the challenge;
 - generates the target configuration and benchmark plan under `<output>\_generated`;
-- starts the selected coding-agent CLI in the candidate workspace;
+- opens or prints the candidate workspace and prompt;
+- lets you run the model or coding agent from VS Code or another UI;
 - captures the candidate patch;
 - runs hidden validator assertions;
 - writes `comparison.md`, `comparison.json` and per-attempt evidence.
 
-Built-in presets:
-
-| Agent | Command Model Validator Runs |
-| --- | --- |
-| `codex` | `codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>` |
-| `claude` | `claude -p <prompt>` |
-
-Custom CLI shape:
+Automated CLI mode:
 
 ```powershell
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\dotnet\idempotent-processing --agent custom --provider openai --model gpt-5 --output C:\Work\model-validator-runs\custom-idempotency -- my-agent run --model {model} --prompt-file {promptPath}
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-idempotency -- codex exec --model {model} --sandbox workspace-write --ask-for-approval never {prompt}
 ```
 
 Supported placeholders after `--` are `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}`.
@@ -62,15 +56,15 @@ For each target attempt, the framework:
 
 ## What the Agent Does
 
-The framework does not talk to model APIs directly. In the quick path, the built-in local-command adapter starts the selected agent CLI for you.
+The framework does not talk to model APIs directly. In interactive mode, you choose the model in VS Code or another UI and edit the prepared workspace. In automated mode, the built-in local-command adapter starts the command you supplied.
 
-For example, the Codex preset runs:
+For example, this automated command runs Codex CLI:
 
 ```text
 codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>
 ```
 
-The same pattern works for another coding system when its CLI can edit the current working directory. Use the custom command form when the built-in preset is not the right shape.
+The same pattern works for any coding system whose CLI can edit the current working directory.
 
 ## What Validation Means
 

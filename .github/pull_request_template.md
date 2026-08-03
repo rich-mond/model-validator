@@ -23,7 +23,7 @@ List the exact commands run and their outcomes. Use `not run` with a reason when
 dotnet restore ModelValidator.slnx --locked-mode
 dotnet build ModelValidator.slnx -c Release
 dotnet test ModelValidator.slnx -c Release --no-build
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent codex --model gpt-5 --output C:\Work\model-validator-runs\codex-gpt5-order-normalization
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --open vscode --output ..\model-validator-runs\order-normalization-vscode
 ```
 
 ## Generated Outputs
