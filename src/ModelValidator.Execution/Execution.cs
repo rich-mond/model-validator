@@ -413,6 +413,17 @@ public sealed class ValidatorRunner
     }
 }
 
+public interface IChallengeVerificationProgress
+{
+    void ValidatorImageResolved(string image);
+    void WorkRootCreated(string path);
+    void StageStarted(string id, string? patchPath);
+    void PatchApplied(string id, string patchPath);
+    void AssertionStarted(string stageId, AssertionSpec assertion);
+    void AssertionCompleted(string stageId, AssertionRunResult result);
+    void CounterexampleCompleted(string id, IReadOnlyList<string> failedAssertions, IReadOnlyList<string> expectedFailedAssertions);
+}
+
 public sealed class ChallengePackVerifier
 {
     private readonly GitWorkspaceManager git;
@@ -426,7 +437,7 @@ public sealed class ChallengePackVerifier
         this.validator = validator ?? new ValidatorRunner(this.processRunner);
     }
 
-    public async Task<ChallengeVerificationResult> VerifyAsync(string challengeRoot, CancellationToken cancellationToken = default)
+    public async Task<ChallengeVerificationResult> VerifyAsync(string challengeRoot, IChallengeVerificationProgress? progress = null, CancellationToken cancellationToken = default)
     {
         ChallengeManifest manifest = ConfigurationLoader.LoadChallenge(Path.Combine(challengeRoot, "challenge.json"));
         if (Hashing.Sha256File(Path.Combine(challengeRoot, manifest.Prompt.Path)) != manifest.Prompt.Sha256)
@@ -437,8 +448,10 @@ public sealed class ChallengePackVerifier
         string bundlePath = Path.Combine(challengeRoot, manifest.Workspace.Path);
         await git.VerifyBundleAsync(bundlePath, manifest.Workspace.Sha256, manifest.Workspace.BaseCommit, cancellationToken).ConfigureAwait(false);
         string image = await validator.ResolveImageAsync(challengeRoot, manifest.Validation.Image, cancellationToken).ConfigureAwait(false);
+        progress?.ValidatorImageResolved(image);
         string workRoot = Path.Combine(Path.GetTempPath(), "model-validator-challenge-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
+        progress?.WorkRootCreated(workRoot);
 
         IReadOnlyList<AssertionRunResult> starter = await MaterializePatchAndValidateAsync("starter", null).ConfigureAwait(false);
         IReadOnlyList<AssertionRunResult> oracle1 = await MaterializePatchAndValidateAsync("oracle-1", Path.Combine(challengeRoot, "oracle", "solution.patch")).ConfigureAwait(false);
@@ -453,7 +466,9 @@ public sealed class ChallengePackVerifier
             foreach (CounterexampleSpec counterexample in counterexamples.Counterexamples)
             {
                 IReadOnlyList<AssertionRunResult> results = await MaterializePatchAndValidateAsync("counterexample-" + counterexample.Id, Path.Combine(challengeRoot, "counterexamples", counterexample.Path)).ConfigureAwait(false);
-                counterexampleFailures[counterexample.Id] = results.Where(r => r.Status != AssertionStatus.Passed).Select(r => r.Id).ToArray();
+                string[] failedAssertions = results.Where(r => r.Status != AssertionStatus.Passed).Select(r => r.Id).ToArray();
+                counterexampleFailures[counterexample.Id] = failedAssertions;
+                progress?.CounterexampleCompleted(counterexample.Id, failedAssertions, counterexample.ExpectedFailedAssertions);
             }
         }
 
@@ -468,6 +483,7 @@ public sealed class ChallengePackVerifier
 
         async Task<IReadOnlyList<AssertionRunResult>> MaterializePatchAndValidateAsync(string id, string? patchPath)
         {
+            progress?.StageStarted(id, patchPath);
             string workspace = Path.Combine(workRoot, id, "workspace");
             await git.MaterializeAsync(bundlePath, manifest.Workspace.Sha256, manifest.Workspace.BaseCommit, workspace, $"model-validator/verify/{id}", cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(patchPath) && !string.IsNullOrWhiteSpace(await File.ReadAllTextAsync(patchPath, cancellationToken).ConfigureAwait(false)))
@@ -477,13 +493,18 @@ public sealed class ChallengePackVerifier
                 {
                     throw new InvalidOperationException($"Patch '{patchPath}' failed to apply: {apply.StandardError}{apply.StandardOutput}");
                 }
+
+                progress?.PatchApplied(id, patchPath);
             }
 
             List<AssertionRunResult> results = new();
             foreach (AssertionSpec assertion in manifest.Validation.Assertions)
             {
                 string output = Path.Combine(workRoot, id, "validators", assertion.Id);
-                results.Add(await validator.RunAssertionAsync(image, workspace, manifest.Validation.WorkspacePath, assertion, output, cancellationToken).ConfigureAwait(false));
+                progress?.AssertionStarted(id, assertion);
+                AssertionRunResult result = await validator.RunAssertionAsync(image, workspace, manifest.Validation.WorkspacePath, assertion, output, cancellationToken).ConfigureAwait(false);
+                results.Add(result);
+                progress?.AssertionCompleted(id, result);
             }
 
             return results;
