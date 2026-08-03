@@ -379,7 +379,7 @@ public sealed class ValidatorRunner
             throw new InvalidOperationException($"Validator context digest mismatch. Expected {expected}, got {actual}.");
         }
 
-        string tag = $"model-validator-local-{Hashing.Sha256String(context)[..12]}";
+        string tag = $"model-validator-validator-{Hashing.Sha256String(context)[..12]}";
         ProcessResult build = await runner.RunAsync(new("docker", ["build", "-f", Path.Combine(challengeRoot, image.ContainerfilePath ?? ""), "-t", tag, context], challengeRoot, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromMinutes(20)), cancellationToken).ConfigureAwait(false);
         if (build.ExitCode != 0)
         {

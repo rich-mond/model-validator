@@ -28,15 +28,17 @@ This repository is only the framework. It should not contain committed challenge
 From a fresh machine, you can clone both repos, build the framework and verify the supported challenge packs.
 
 ```powershell
-cd C:\Work
+$root = Join-Path $HOME "model-validator-work"
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+Set-Location $root
 git clone https://github.com/rich-mond/model-validator.git
 git clone https://github.com/rich-mond/model-validator-challenges.git
-cd C:\Work\model-validator
+Set-Location .\model-validator
 dotnet restore ModelValidator.slnx --locked-mode
 dotnet build ModelValidator.slnx -c Release
 dotnet test ModelValidator.slnx -c Release --no-build
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path C:\Work\model-validator-challenges\dotnet\idempotent-processing
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path C:\Work\model-validator-challenges\python\order-normalization
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path ..\model-validator-challenges\dotnet\idempotent-processing
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path ..\model-validator-challenges\python\order-normalization
 ```
 
 The verification commands prove that each challenge pack is coherent: the starter workspace fails required checks, the oracle patch passes, the oracle is stable and known-invalid patches fail as expected.
@@ -50,22 +52,24 @@ The current public challenge catalog contains:
 
 ## Run A Model
 
-For normal use, pick a challenge, pick an agent CLI and model, and run `benchmark`.
+For normal use, pick a challenge and run `benchmark`. The default mode is interactive: Model Validator prepares the candidate workspace and prompt, you run the model or agent from your preferred UI, then Model Validator resumes validation.
 
-Example using Codex:
-
-```powershell
-cd C:\Work\model-validator
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent codex --model gpt-5 --output C:\Work\model-validator-runs\codex-gpt5-order-normalization
-```
-
-Example using Claude Code:
+Example opening the workspace in VS Code:
 
 ```powershell
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent claude --model claude-opus-4-1 --output C:\Work\model-validator-runs\claude-opus-order-normalization
+Set-Location .\model-validator
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --open vscode --output ..\model-validator-runs\order-normalization-vscode
 ```
 
-The command creates a fresh challenge workspace, runs the selected coding-agent CLI in that workspace, stops the agent, captures the candidate patch, runs the hidden validator and writes the score report.
+When VS Code opens, choose the model from the extension or UI you normally use, run it against the prepared workspace, then return to the terminal and press Enter. The validator runs after that.
+
+You can also run without opening an editor:
+
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\python\order-normalization --output ..\model-validator-runs\order-normalization-manual
+```
+
+The command prints the workspace and prompt paths. Use any model or coding-agent UI to edit the workspace, then press Enter to score the result.
 
 Outputs are written under the `--output` directory:
 
@@ -81,17 +85,10 @@ Outputs are written under the `--output` directory:
 
 The generated JSON is saved so the run can be audited or repeated, but users do not need to write it by hand for the standard path.
 
-The built-in presets are:
-
-| Agent | Command Model Validator Runs |
-| --- | --- |
-| `codex` | `codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>` |
-| `claude` | `claude -p <prompt>` |
-
-If an agent CLI needs a different command shape, pass it after `--`. Use `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}` as placeholders:
+For unattended automation, pass the agent command after `--`. Use `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}` as placeholders:
 
 ```powershell
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\dotnet\idempotent-processing --agent custom --provider openai --model gpt-5 --output C:\Work\model-validator-runs\custom-run -- my-agent run --model {model} --prompt-file {promptPath}
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-run -- codex exec --model {model} --sandbox workspace-write --ask-for-approval never {prompt}
 ```
 
 The target agent receives only the materialised workspace, the prompt and explicitly allowed configuration. It does not receive the validator, oracle patch, counterexamples, Git remotes or repository credentials.
@@ -140,12 +137,12 @@ Create a benchmark plan that points at the challenge and target configs:
 {
   "schemaVersion": "1.0",
   "planId": "first-order-normalization-run",
-  "challengePath": "C:\\Work\\model-validator-challenges\\python\\order-normalization",
+  "challengePath": "<challenge-repo>\\python\\order-normalization",
   "targets": [
-    "C:\\Work\\targets\\codex-gpt-5-default.json"
+    "<targets>\\codex-gpt-5-default.json"
   ],
   "attemptsPerTarget": 1,
-  "outputPath": "C:\\Work\\model-validator-runs\\first-order-normalization-run",
+  "outputPath": "<runs>\\first-order-normalization-run",
   "execution": {
     "maximumParallelTargets": 1,
     "retainWorkspaces": false
@@ -156,8 +153,9 @@ Create a benchmark plan that points at the challenge and target configs:
 Validate and run it:
 
 ```powershell
-dotnet run --project C:\Work\model-validator\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- plan validate --path C:\Work\plans\first-order-normalization-run.json
-dotnet run --project C:\Work\model-validator\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- run --plan C:\Work\plans\first-order-normalization-run.json
+$planPath = Join-Path $HOME "model-validator-plans\first-order-normalization-run.json"
+dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- plan validate --path $planPath
+dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- run --plan $planPath
 ```
 
 Outputs are written under the plan `outputPath`. Keep those outputs out of both repos.
@@ -179,7 +177,7 @@ doctor
 Example from source:
 
 ```powershell
-dotnet run --project C:\Work\model-validator\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- doctor
+dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- doctor
 ```
 
 ## Result Model

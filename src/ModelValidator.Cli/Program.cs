@@ -60,6 +60,11 @@ public static class Program
                 return await RunLocalCommandAdapterAsync(args.Skip(2).ToArray()).ConfigureAwait(false);
             }
 
+            if (args.Length > 1 && args[0] == "adapter" && args[1] == "manual")
+            {
+                return await RunManualAdapterAsync(args.Skip(2).ToArray()).ConfigureAwait(false);
+            }
+
             if (args.Length >= 3 && args[0] == "compare" && args[1] == "--runs")
             {
                 return CompareRuns(args.Skip(2).ToArray());
@@ -77,13 +82,14 @@ public static class Program
 
     private static async Task<int> VerifyChallengeAsync(string challengePath)
     {
-        string manifestPath = Path.Combine(challengePath, "challenge.json");
+        string challengeRoot = Path.GetFullPath(challengePath);
+        string manifestPath = Path.Combine(challengeRoot, "challenge.json");
         ChallengeManifest manifest = ConfigurationLoader.LoadChallenge(manifestPath);
-        if (Hashing.Sha256File(Path.Combine(challengePath, manifest.Prompt.Path)) != manifest.Prompt.Sha256) throw new InvalidOperationException("Prompt digest mismatch.");
+        if (Hashing.Sha256File(Path.Combine(challengeRoot, manifest.Prompt.Path)) != manifest.Prompt.Sha256) throw new InvalidOperationException("Prompt digest mismatch.");
         GitWorkspaceManager git = new();
-        await git.VerifyBundleAsync(Path.Combine(challengePath, manifest.Workspace.Path), manifest.Workspace.Sha256, manifest.Workspace.BaseCommit).ConfigureAwait(false);
-        ChallengeVerificationResult result = await new ChallengePackVerifier(git).VerifyAsync(challengePath).ConfigureAwait(false);
-        JsonIO.Save(Path.Combine(challengePath, "verification", "pack-verification.json"), result);
+        await git.VerifyBundleAsync(Path.Combine(challengeRoot, manifest.Workspace.Path), manifest.Workspace.Sha256, manifest.Workspace.BaseCommit).ConfigureAwait(false);
+        ChallengeVerificationResult result = await new ChallengePackVerifier(git).VerifyAsync(challengeRoot).ConfigureAwait(false);
+        JsonIO.Save(Path.Combine(challengeRoot, "verification", "pack-verification.json"), result);
         if (result.Diagnostics.Count > 0)
         {
             foreach (string diagnostic in result.Diagnostics)
@@ -208,15 +214,15 @@ public static class Program
     {
         ParsedOptions options = ParsedOptions.Parse(args);
         string challengePath = options.Required("--challenge");
-        string agent = options.Required("--agent");
-        string model = options.Required("--model");
+        string agent = options.Value("--agent") ?? "interactive";
+        string model = options.Value("--model") ?? "selected-in-agent-ui";
         string outputPath = options.Required("--output");
         string provider = options.Value("--provider") ?? DefaultProvider(agent);
         int attempts = int.TryParse(options.Value("--attempts"), out int parsedAttempts) && parsedAttempts > 0 ? parsedAttempts : 1;
         string agentVersion = options.Value("--agent-version") ?? "unknown";
         string targetId = options.Value("--target-id") ?? Slug($"{agent}-{model}");
         string displayName = options.Value("--display-name") ?? $"{agent} {model}";
-        string[] command = options.Trailing.Count > 0 ? options.Trailing.ToArray() : PresetCommand(agent, model);
+        string[] command = options.Trailing.Count > 0 ? options.Trailing.ToArray() : ManualCommand(options.Value("--open"));
 
         string runRoot = Path.GetFullPath(outputPath);
         string generatedRoot = Path.Combine(runRoot, "_generated");
@@ -285,12 +291,46 @@ public static class Program
         return result.TimedOut ? 124 : result.ExitCode;
     }
 
-    private static string[] PresetCommand(string agent, string model) => agent.ToLowerInvariant() switch
+    private static async Task<int> RunManualAdapterAsync(IReadOnlyList<string> args)
     {
-        "codex" => ["codex", "exec", "--model", model, "--sandbox", "workspace-write", "--ask-for-approval", "never", "{prompt}"],
-        "claude" or "claude-code" => ["claude", "-p", "{prompt}"],
-        _ => throw new InvalidOperationException($"No built-in command preset exists for agent '{agent}'. Use '-- <command> <args>' after the benchmark options.")
-    };
+        ParsedOptions options = ParsedOptions.Parse(args);
+        string workspace = options.Required("--workspace");
+        string prompt = options.Required("--prompt");
+        string output = options.Required("--output");
+        string? openTool = options.Value("--open");
+        Directory.CreateDirectory(output);
+        string promptCopy = Path.Combine(output, "prompt.md");
+        File.Copy(prompt, promptCopy, overwrite: true);
+
+        if (openTool is not null)
+        {
+            string executable = openTool.Equals("code", StringComparison.OrdinalIgnoreCase) ? "code" : openTool;
+            ProcessResult open = await new ProcessRunner().RunAsync(new(executable, [workspace, promptCopy], workspace, Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value, StringComparer.Ordinal), TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+            if (open.ExitCode != 0)
+            {
+                Console.Error.WriteLine(open.StandardError);
+                Console.Error.WriteLine(open.StandardOutput);
+                return open.ExitCode;
+            }
+        }
+
+        Console.WriteLine("Manual benchmark workspace is ready.");
+        Console.WriteLine($"Workspace: {workspace}");
+        Console.WriteLine($"Prompt: {promptCopy}");
+        Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to validate.");
+        _ = Console.ReadLine();
+        JsonIO.Save(Path.Combine(output, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));
+        return 0;
+    }
+
+    private static string[] ManualCommand(string? openTool) =>
+        openTool?.ToLowerInvariant() switch
+        {
+            "vscode" or "code" => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}", "--open", "code"],
+            null => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}"],
+            "" => ["dotnet", typeof(Program).Assembly.Location, "adapter", "manual", "--workspace", "{workspace}", "--prompt", "{promptPath}", "--output", "{output}"],
+            _ => throw new InvalidOperationException($"Unsupported --open value '{openTool}'. Supported value: vscode.")
+        };
 
     private static string DefaultProvider(string agent) => agent.ToLowerInvariant() switch
     {
@@ -302,8 +342,8 @@ public static class Program
     private static IReadOnlyList<string> DefaultSecretVariables(string provider, IReadOnlyList<string> requested)
     {
         SortedSet<string> values = new(requested, StringComparer.Ordinal);
-        if (provider.Equals("openai", StringComparison.OrdinalIgnoreCase)) values.Add("OPENAI_API_KEY");
-        if (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase)) values.Add("ANTHROPIC_API_KEY");
+            if (provider.Equals("openai", StringComparison.OrdinalIgnoreCase)) values.Add("OPENAI_API_KEY");
+            if (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase)) values.Add("ANTHROPIC_API_KEY");
         return values.ToArray();
     }
 
