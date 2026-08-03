@@ -43,6 +43,8 @@ dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release
 
 The verification commands prove that each challenge pack is coherent: the starter workspace fails required checks, the oracle patch passes, the oracle is stable and known-invalid patches fail as expected.
 
+Successful verification prints the checks it performed and a short summary: manifest and digest checks, validator calibration, oracle stability and counterexample count.
+
 The current public challenge catalog contains:
 
 | Pack | Language | Task |
@@ -62,6 +64,8 @@ dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release
 ```
 
 When VS Code opens, choose the model from the extension or UI you normally use, run it against the prepared workspace, then return to the terminal and press Enter. The validator runs after that.
+
+The command prints the generated target/plan paths, the candidate workspace, the prompt path and a final score report. It should not finish before you press Enter in interactive mode.
 
 You can also run without opening an editor:
 
@@ -160,6 +164,12 @@ dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Relea
 
 Outputs are written under the plan `outputPath`. Keep those outputs out of both repos.
 
+To print the score again later:
+
+```powershell
+dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- results --run ..\model-validator-runs\order-normalization-vscode
+```
+
 ## Commands
 
 The CLI is currently run through `dotnet run` from source. The documentation uses `modelval` as the intended command name for a future packaged tool.
@@ -170,6 +180,7 @@ plan validate --path <benchmark-plan.json>
 run --plan <benchmark-plan.json>
 report --run <run-directory> --format json
 report --run <run-directory> --format markdown
+results --run <run-directory>
 compare --runs <run-directory> <run-directory>
 doctor
 ```
