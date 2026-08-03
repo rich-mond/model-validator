@@ -50,6 +50,16 @@ public static class Program
                 return await RunPlanAsync(runPlanPath).ConfigureAwait(false);
             }
 
+            if (args.Length > 0 && args[0] == "benchmark")
+            {
+                return await RunQuickBenchmarkAsync(args.Skip(1).ToArray()).ConfigureAwait(false);
+            }
+
+            if (args.Length > 1 && args[0] == "adapter" && args[1] == "local-command")
+            {
+                return await RunLocalCommandAdapterAsync(args.Skip(2).ToArray()).ConfigureAwait(false);
+            }
+
             if (args.Length >= 3 && args[0] == "compare" && args[1] == "--runs")
             {
                 return CompareRuns(args.Skip(2).ToArray());
@@ -194,11 +204,200 @@ public static class Program
         return compatible ? 0 : 1;
     }
 
+    private static async Task<int> RunQuickBenchmarkAsync(IReadOnlyList<string> args)
+    {
+        ParsedOptions options = ParsedOptions.Parse(args);
+        string challengePath = options.Required("--challenge");
+        string agent = options.Required("--agent");
+        string model = options.Required("--model");
+        string outputPath = options.Required("--output");
+        string provider = options.Value("--provider") ?? DefaultProvider(agent);
+        int attempts = int.TryParse(options.Value("--attempts"), out int parsedAttempts) && parsedAttempts > 0 ? parsedAttempts : 1;
+        string agentVersion = options.Value("--agent-version") ?? "unknown";
+        string targetId = options.Value("--target-id") ?? Slug($"{agent}-{model}");
+        string displayName = options.Value("--display-name") ?? $"{agent} {model}";
+        string[] command = options.Trailing.Count > 0 ? options.Trailing.ToArray() : PresetCommand(agent, model);
+
+        string runRoot = Path.GetFullPath(outputPath);
+        string generatedRoot = Path.Combine(runRoot, "_generated");
+        Directory.CreateDirectory(generatedRoot);
+        string targetPath = Path.Combine(generatedRoot, $"{targetId}.target.json");
+        string planPath = Path.Combine(generatedRoot, "benchmark-plan.json");
+        string adapterAssembly = typeof(Program).Assembly.Location;
+        string[] adapterCommand = ["dotnet", adapterAssembly, "adapter", "local-command", "--agent", agent, "--model", model, .. command.SelectMany(value => new[] { "--command", value })];
+
+        TargetConfiguration target = new(
+            "1.0",
+            targetId,
+            displayName,
+            new(agent, agentVersion),
+            new(model, model, provider),
+            new("process", null, adapterCommand, "/workspace", "/input/prompt.md", "/output"),
+            new(DefaultAllowedVariables(options.Values("--allow-env")), DefaultSecretVariables(provider, options.Values("--secret-env"))),
+            new(2, 2147483648, 128));
+        BenchmarkPlan plan = new(
+            "1.0",
+            Slug($"{Path.GetFileName(Path.GetFullPath(challengePath))}-{targetId}"),
+            Path.GetFullPath(challengePath),
+            [targetPath],
+            attempts,
+            runRoot,
+            new(1, false));
+
+        JsonIO.Save(targetPath, target);
+        JsonIO.Save(planPath, plan);
+        Console.WriteLine($"Generated target: {targetPath}");
+        Console.WriteLine($"Generated plan: {planPath}");
+        return await RunPlanAsync(planPath).ConfigureAwait(false);
+    }
+
+    private static async Task<int> RunLocalCommandAdapterAsync(IReadOnlyList<string> args)
+    {
+        ParsedOptions options = ParsedOptions.Parse(args);
+        string workspace = options.Required("--workspace");
+        string prompt = options.Required("--prompt");
+        string output = options.Required("--output");
+        string model = options.Value("--model") ?? "unknown";
+        IReadOnlyList<string> command = options.Values("--command");
+        if (command.Count == 0)
+        {
+            throw new InvalidOperationException("No agent command was supplied after '--'.");
+        }
+
+        Directory.CreateDirectory(output);
+        string promptText = await File.ReadAllTextAsync(prompt).ConfigureAwait(false);
+        string executable = ExpandToken(command[0], workspace, prompt, output, promptText, model);
+        string[] commandArgs = command.Skip(1).Select(value => ExpandToken(value, workspace, prompt, output, promptText, model)).ToArray();
+        Dictionary<string, string?> environment = Environment.GetEnvironmentVariables()
+            .Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value, StringComparer.Ordinal);
+        ProcessResult result = await new ProcessRunner().RunAsync(new(executable, commandArgs, workspace, environment, TimeSpan.FromDays(7))).ConfigureAwait(false);
+
+        await File.WriteAllTextAsync(Path.Combine(output, "agent.stdout.log"), result.StandardOutput).ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(output, "agent.stderr.log"), result.StandardError).ConfigureAwait(false);
+        if (!File.Exists(Path.Combine(output, "usage.json")))
+        {
+            JsonIO.Save(Path.Combine(output, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));
+        }
+
+        Console.Write(result.StandardOutput);
+        Console.Error.Write(result.StandardError);
+        return result.TimedOut ? 124 : result.ExitCode;
+    }
+
+    private static string[] PresetCommand(string agent, string model) => agent.ToLowerInvariant() switch
+    {
+        "codex" => ["codex", "exec", "--model", model, "--sandbox", "workspace-write", "--ask-for-approval", "never", "{prompt}"],
+        "claude" or "claude-code" => ["claude", "-p", "{prompt}"],
+        _ => throw new InvalidOperationException($"No built-in command preset exists for agent '{agent}'. Use '-- <command> <args>' after the benchmark options.")
+    };
+
+    private static string DefaultProvider(string agent) => agent.ToLowerInvariant() switch
+    {
+        "codex" => "openai",
+        "claude" or "claude-code" => "anthropic",
+        _ => "custom"
+    };
+
+    private static IReadOnlyList<string> DefaultSecretVariables(string provider, IReadOnlyList<string> requested)
+    {
+        SortedSet<string> values = new(requested, StringComparer.Ordinal);
+        if (provider.Equals("openai", StringComparison.OrdinalIgnoreCase)) values.Add("OPENAI_API_KEY");
+        if (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase)) values.Add("ANTHROPIC_API_KEY");
+        return values.ToArray();
+    }
+
+    private static IReadOnlyList<string> DefaultAllowedVariables(IReadOnlyList<string> requested)
+    {
+        SortedSet<string> values = new(requested, StringComparer.Ordinal)
+        {
+            "APPDATA",
+            "HOME",
+            "LOCALAPPDATA",
+            "USERPROFILE"
+        };
+        return values.ToArray();
+    }
+
+    private static string ExpandToken(string value, string workspace, string promptPath, string outputPath, string promptText, string model) =>
+        value.Replace("{workspace}", workspace, StringComparison.Ordinal)
+            .Replace("{promptPath}", promptPath, StringComparison.Ordinal)
+            .Replace("{output}", outputPath, StringComparison.Ordinal)
+            .Replace("{prompt}", promptText, StringComparison.Ordinal)
+            .Replace("{model}", model, StringComparison.Ordinal);
+
+    private static string Slug(string value)
+    {
+        char[] chars = value.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
+        return string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private static void PrintIssues(ValidationResult result)
     {
         foreach (ValidationIssue issue in result.Issues)
         {
             Console.Error.WriteLine($"{issue.Path}: {issue.Message}");
         }
+    }
+
+    private sealed class ParsedOptions
+    {
+        private readonly Dictionary<string, List<string>> values;
+
+        private ParsedOptions(Dictionary<string, List<string>> values, IReadOnlyList<string> trailing)
+        {
+            this.values = values;
+            Trailing = trailing;
+        }
+
+        public IReadOnlyList<string> Trailing { get; }
+
+        public static ParsedOptions Parse(IReadOnlyList<string> args)
+        {
+            Dictionary<string, List<string>> values = new(StringComparer.Ordinal);
+            List<string> trailing = new();
+            bool inTrailing = false;
+            for (int i = 0; i < args.Count; i++)
+            {
+                string arg = args[i];
+                if (inTrailing)
+                {
+                    trailing.Add(arg);
+                    continue;
+                }
+
+                if (arg == "--")
+                {
+                    inTrailing = true;
+                    continue;
+                }
+
+                if (!arg.StartsWith("--", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"Unexpected argument '{arg}'.");
+                }
+
+                if (i + 1 >= args.Count || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"Missing value for '{arg}'.");
+                }
+
+                if (!values.TryGetValue(arg, out List<string>? list))
+                {
+                    list = new();
+                    values[arg] = list;
+                }
+
+                list.Add(args[++i]);
+            }
+
+            return new(values, trailing);
+        }
+
+        public string Required(string name) => Value(name) ?? throw new InvalidOperationException($"Missing required option '{name}'.");
+
+        public string? Value(string name) => values.TryGetValue(name, out List<string>? list) && list.Count > 0 ? list[^1] : null;
+
+        public IReadOnlyList<string> Values(string name) => values.TryGetValue(name, out List<string>? list) ? list : [];
     }
 }

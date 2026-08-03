@@ -1,5 +1,9 @@
 # Adapter Contract
 
+Most users do not need to write an adapter. Use `modelval benchmark --agent <agent> --model <model>` and Model Validator will run the built-in local-command adapter with the selected agent CLI.
+
+This contract matters when adding a new first-class adapter mode or when the built-in command form is not enough.
+
 Target adapters receive:
 
 - a writable workspace;

@@ -48,33 +48,57 @@ The current public challenge catalog contains:
 | `dotnet/idempotent-processing` | C# / .NET | Make command processing idempotent under duplicate and concurrent delivery |
 | `python/order-normalization` | Python | Normalize inbound order events without mutating input |
 
-## What You Need For A Real Benchmark
+## Run A Model
 
-A real benchmark needs one thing this repository does not ship with yet: a target adapter.
+For normal use, pick a challenge, pick an agent CLI and model, and run `benchmark`.
 
-The framework does not call Codex, Claude Code or another coding agent directly. Instead, it starts an adapter process or container. The adapter is responsible for running the agent against the materialised workspace.
+Example using Codex:
 
-The framework supplies the adapter with:
-
-```text
---workspace <candidate-workspace>
---prompt <prompt-file>
---output <target-output-directory>
+```powershell
+cd C:\Work\model-validator
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent codex --model gpt-5 --output C:\Work\model-validator-runs\codex-gpt5-order-normalization
 ```
 
-The adapter should:
+Example using Claude Code:
 
-1. Read the prompt.
-2. Run the chosen coding agent in the supplied workspace.
-3. Leave the final candidate files in that workspace.
-4. Optionally write usage metrics to `usage.json`.
-5. Exit.
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\python\order-normalization --agent claude --model claude-opus-4-1 --output C:\Work\model-validator-runs\claude-opus-order-normalization
+```
 
-After the adapter exits, Model Validator captures the candidate patch and runs the challenge validator. The target agent never receives the hidden validator, oracle patch, known-invalid patches, Git remotes or repository credentials.
+The command creates a fresh challenge workspace, runs the selected coding-agent CLI in that workspace, stops the agent, captures the candidate patch, runs the hidden validator and writes the score report.
 
-## Run Shape
+Outputs are written under the `--output` directory:
 
-Create one target config per evaluated system. A target is the full system under test, not just a model name.
+```text
+<output>/
+├── _generated/
+│   ├── benchmark-plan.json
+│   └── <target>.target.json
+├── comparison.json
+├── comparison.md
+└── targets/
+```
+
+The generated JSON is saved so the run can be audited or repeated, but users do not need to write it by hand for the standard path.
+
+The built-in presets are:
+
+| Agent | Command Model Validator Runs |
+| --- | --- |
+| `codex` | `codex exec --model <model> --sandbox workspace-write --ask-for-approval never <prompt>` |
+| `claude` | `claude -p <prompt>` |
+
+If an agent CLI needs a different command shape, pass it after `--`. Use `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}` as placeholders:
+
+```powershell
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge C:\Work\model-validator-challenges\dotnet\idempotent-processing --agent custom --provider openai --model gpt-5 --output C:\Work\model-validator-runs\custom-run -- my-agent run --model {model} --prompt-file {promptPath}
+```
+
+The target agent receives only the materialised workspace, the prompt and explicitly allowed configuration. It does not receive the validator, oracle patch, counterexamples, Git remotes or repository credentials.
+
+## Advanced Run Shape
+
+The framework still supports explicit target and plan JSON for scripted comparisons. A target is the full system under test, not just a model name.
 
 ```json
 {
@@ -110,7 +134,7 @@ Create one target config per evaluated system. A target is the full system under
 }
 ```
 
-Create a benchmark plan that points at the challenge and the target configs:
+Create a benchmark plan that points at the challenge and target configs:
 
 ```json
 {
