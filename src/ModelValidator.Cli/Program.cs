@@ -47,8 +47,8 @@ public static class Program
 
             if (args is ["results", "--run", var resultsRunPath])
             {
-                string markdown = Path.Combine(resultsRunPath, "comparison.md");
-                Console.WriteLine(await File.ReadAllTextAsync(markdown).ConfigureAwait(false));
+                ComparisonReport report = JsonIO.Load<ComparisonReport>(Path.Combine(resultsRunPath, "comparison.json"));
+                PrintConsoleSummary(report, Path.GetFullPath(resultsRunPath));
                 return 0;
             }
 
@@ -197,7 +197,7 @@ public static class Program
         string markdown = MarkdownReport.Render(report);
         await File.WriteAllTextAsync(Path.Combine(outputRoot, "comparison.md"), markdown).ConfigureAwait(false);
         Console.WriteLine($"Run complete: {outputRoot}");
-        Console.WriteLine(markdown);
+        PrintConsoleSummary(report, outputRoot);
         return 0;
     }
 
@@ -320,13 +320,19 @@ public static class Program
             Console.WriteLine($"Prompt: {promptCopy}");
             if (openTool is not null)
             {
-                await OpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
+                await TryOpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
             }
 
-            Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to validate.");
+            Console.WriteLine();
+            Console.WriteLine("Next steps:");
+            Console.WriteLine("1. Use your chosen model or coding-agent UI against the workspace above.");
+            Console.WriteLine("2. Give it the prompt file above.");
+            Console.WriteLine("3. Let it edit only that workspace.");
+            Console.WriteLine("4. Return here and press Enter when the agent has finished.");
             DateTimeOffset startedUtc = clock.UtcNow;
             long started = clock.Timestamp;
             _ = Console.ReadLine();
+            Console.WriteLine("Validating candidate changes...");
             DateTimeOffset finishedUtc = clock.UtcNow;
             TimeSpan targetDuration = clock.ElapsedSince(started);
             await File.WriteAllTextAsync(Path.Combine(attemptRoot, "target.stdout.log"), "Interactive target execution completed by user.").ConfigureAwait(false);
@@ -356,23 +362,60 @@ public static class Program
         string markdown = MarkdownReport.Render(report);
         await File.WriteAllTextAsync(Path.Combine(outputRoot, "comparison.md"), markdown).ConfigureAwait(false);
         Console.WriteLine($"Run complete: {outputRoot}");
-        Console.WriteLine(markdown);
+        PrintConsoleSummary(report, outputRoot);
         return 0;
     }
 
-    private static async Task OpenWorkspaceAsync(string openTool, string workspace, string promptPath)
+    private static async Task TryOpenWorkspaceAsync(string openTool, string workspace, string promptPath)
     {
-        string executable = openTool.ToLowerInvariant() switch
+        string executableName = openTool.ToLowerInvariant() switch
         {
             "vscode" or "code" => "code",
             _ => throw new InvalidOperationException($"Unsupported --open value '{openTool}'. Supported value: vscode.")
         };
+
+        string? executable = ResolveExecutable(executableName);
+        if (executable is null)
+        {
+            Console.Error.WriteLine("Could not find VS Code's 'code' launcher on PATH.");
+            Console.Error.WriteLine("Open the workspace manually, or install the VS Code shell command, then press Enter here when the agent has finished.");
+            return;
+        }
+
+        Console.WriteLine($"Opening workspace in VS Code: {workspace}");
         Dictionary<string, string?> environment = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value, StringComparer.Ordinal);
         ProcessResult result = await new ProcessRunner().RunAsync(new(executable, [workspace, promptPath], workspace, environment, TimeSpan.FromSeconds(30))).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
-            throw new InvalidOperationException($"Could not open '{executable}'. {result.StandardError}{result.StandardOutput}");
+            Console.Error.WriteLine($"Could not open VS Code automatically. Exit code: {result.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            if (!string.IsNullOrWhiteSpace(result.StandardError)) Console.Error.WriteLine(result.StandardError.Trim());
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput)) Console.Error.WriteLine(result.StandardOutput.Trim());
+            Console.Error.WriteLine("Open the workspace manually, then press Enter here when the agent has finished.");
         }
+    }
+
+    private static string? ResolveExecutable(string executable)
+    {
+        if (Path.IsPathRooted(executable) && File.Exists(executable)) return executable;
+
+        string[] extensions = OperatingSystem.IsWindows()
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [string.Empty];
+        bool hasExtension = !string.IsNullOrWhiteSpace(Path.GetExtension(executable));
+        IEnumerable<string> candidates = OperatingSystem.IsWindows() && !hasExtension
+            ? extensions.Select(extension => executable + extension.ToLowerInvariant()).Concat(extensions.Select(extension => executable + extension.ToUpperInvariant()))
+            : [executable];
+
+        foreach (string pathEntry in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (string candidate in candidates)
+            {
+                string fullPath = Path.Combine(pathEntry, candidate);
+                if (File.Exists(fullPath)) return fullPath;
+            }
+        }
+
+        return null;
     }
 
     private static async Task<int> RunLocalCommandAdapterAsync(IReadOnlyList<string> args)
@@ -422,20 +465,13 @@ public static class Program
 
         if (openTool is not null)
         {
-            string executable = openTool.Equals("code", StringComparison.OrdinalIgnoreCase) ? "code" : openTool;
-            ProcessResult open = await new ProcessRunner().RunAsync(new(executable, [workspace, promptCopy], workspace, Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value, StringComparer.Ordinal), TimeSpan.FromSeconds(30))).ConfigureAwait(false);
-            if (open.ExitCode != 0)
-            {
-                Console.Error.WriteLine(open.StandardError);
-                Console.Error.WriteLine(open.StandardOutput);
-                return open.ExitCode;
-            }
+            await TryOpenWorkspaceAsync(openTool, workspace, promptCopy).ConfigureAwait(false);
         }
 
         Console.WriteLine("Manual benchmark workspace is ready.");
         Console.WriteLine($"Workspace: {workspace}");
         Console.WriteLine($"Prompt: {promptCopy}");
-        Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to validate.");
+        Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to continue.");
         _ = Console.ReadLine();
         JsonIO.Save(Path.Combine(output, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));
         return 0;
@@ -482,6 +518,56 @@ public static class Program
     }
 
     private static string DisposableBranchName(string planId, string targetId, int attemptIndex) => $"mv-{Hashing.Sha256String($"{planId}:{targetId}:{attemptIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}")[..16]}";
+
+    private static void PrintConsoleSummary(ComparisonReport report, string runPath)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Result summary");
+        Console.WriteLine($"Run: {runPath}");
+        Console.WriteLine($"Protocol: {report.ProtocolVersion}");
+        Console.WriteLine($"Compatibility: {report.CompatibilityStatus}");
+
+        foreach (AttemptResult attempt in report.Attempts.OrderBy(a => a.TargetId, StringComparer.Ordinal).ThenBy(a => a.AttemptIndex))
+        {
+            string outcome = attempt.Coverage.Resolved ? "RESOLVED" : "UNRESOLVED";
+            Console.WriteLine();
+            Console.WriteLine($"{attempt.TargetId} attempt {attempt.AttemptIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}: {outcome}");
+            Console.WriteLine($"  Requirements: {attempt.Coverage.RequirementsPassed.ToString(System.Globalization.CultureInfo.InvariantCulture)}/{attempt.Coverage.RequirementsTotal.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            Console.WriteLine($"  Regressions: {attempt.Coverage.RegressionsPassed.ToString(System.Globalization.CultureInfo.InvariantCulture)}/{attempt.Coverage.RegressionsTotal.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            Console.WriteLine($"  Target time: {attempt.TargetDuration.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}s");
+            Console.WriteLine($"  Validation time: {attempt.ValidationDuration.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}s");
+            Console.WriteLine($"  Termination: {attempt.TerminationReason}");
+            Console.WriteLine($"  Authoritative: {attempt.Authoritative.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+
+            AssertionRunResult[] failed = attempt.Assertions.Where(a => a.Status != AssertionStatus.Passed).ToArray();
+            if (failed.Length == 0)
+            {
+                Console.WriteLine("  Failed assertions: none");
+            }
+            else
+            {
+                Console.WriteLine("  Failed assertions:");
+                foreach (AssertionRunResult assertion in failed)
+                {
+                    Console.WriteLine($"    - {assertion.Id} ({assertion.Classification}) {assertion.Status}; exit {assertion.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                }
+            }
+        }
+
+        if (report.PairwiseComparisons.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Pairwise classifications");
+            foreach (PairwiseComparison pair in report.PairwiseComparisons)
+            {
+                string warnings = pair.Warnings.Count == 0 ? "none" : string.Join("; ", pair.Warnings);
+                Console.WriteLine($"{pair.LeftTargetId} vs {pair.RightTargetId}: {pair.Classification}; warnings: {warnings}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Detailed files: comparison.md, comparison.json and targets/<target>/attempt-*/");
+    }
 
     private static void PrintIssues(ValidationResult result)
     {

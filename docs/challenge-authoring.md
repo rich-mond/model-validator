@@ -1,5 +1,15 @@
 # Challenge Authoring
 
+The full challenge-pack file-format contract lives with the challenge catalog:
+
+```text
+https://github.com/rich-mond/model-validator-challenges/blob/develop/docs/challenge-authoring.md
+```
+
+This framework document records the runner-side boundaries that authoring must preserve.
+
+## Pack Inputs
+
 A challenge pack supplies:
 
 - `challenge.json`;

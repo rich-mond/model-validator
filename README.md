@@ -65,7 +65,7 @@ dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release
 
 When VS Code opens, choose the model from the extension or UI you normally use, run it against the prepared workspace, then return to the terminal and press Enter. The validator runs after that.
 
-The command prints the generated target/plan paths, the candidate workspace, the prompt path and a final score report. It should not finish before you press Enter in interactive mode.
+The command prints the generated target/plan paths, the candidate workspace, the prompt path and clear next steps. It should not validate before you press Enter in interactive mode. If VS Code cannot be opened automatically, the command prints the workspace and prompt paths so you can open them manually.
 
 You can also run without opening an editor:
 
@@ -164,11 +164,13 @@ dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Relea
 
 Outputs are written under the plan `outputPath`. Keep those outputs out of both repos.
 
-To print the score again later:
+To print the console score summary again later:
 
 ```powershell
 dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- results --run ..\model-validator-runs\order-normalization-vscode
 ```
+
+To print the persisted Markdown or JSON reports instead, use `report --run <run-directory> --format markdown` or `report --run <run-directory> --format json`.
 
 ## Commands
 
