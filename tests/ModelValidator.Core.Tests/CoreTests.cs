@@ -30,6 +30,20 @@ public sealed class CoreTests
     }
 
     [Fact]
+    public void ChallengeValidationRejectsInvalidSelfCheckCommands()
+    {
+        ChallengeManifest manifest = ValidChallenge() with
+        {
+            SelfChecks = [new("build", "Build", [], ".", 120)]
+        };
+
+        ValidationResult result = ContractValidator.Validate(manifest);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, i => i.Path == "selfChecks[0].command");
+    }
+
+    [Fact]
     public void CoverageRequiresAllRequiredAssertions()
     {
         AssertionRunResult[] assertions =

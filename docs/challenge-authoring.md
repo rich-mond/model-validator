@@ -16,10 +16,11 @@ A challenge pack supplies:
 - `prompt.md`;
 - `workspace/starter.bundle`;
 - validator image context or digest-pinned image;
+- visible self-check commands;
 - oracle patch;
 - counterexamples and expected failed assertions.
 
-The framework verifies the prompt digest, bundle digest, base commit and validator context digest before execution. Validators are declared as executable argument arrays and run after target execution has ended.
+The framework verifies the prompt digest, bundle digest, base commit and validator context digest before execution. Validators and self-checks are declared as executable argument arrays, never shell command strings. Self-checks are copied into the generated workspace task so the target agent knows what local build or test command to run before stopping.
 
 ## Repository Boundary
 
@@ -28,6 +29,8 @@ Challenge source belongs in the challenge repository, not in the framework repos
 ## Validator Boundary
 
 The validator image contains the private checks. It can use any language/runtime needed by the challenge. The framework only runs the declared assertion commands and records their exit statuses, logs and durations.
+
+Self-checks are public sanity checks for the target agent. They do not determine benchmark correctness and must not reveal hidden validator logic, oracle patches or known-invalid examples.
 
 ## Oracle And Counterexamples
 

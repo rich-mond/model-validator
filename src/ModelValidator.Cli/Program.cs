@@ -155,7 +155,8 @@ public static class Program
                 long started = clock.Timestamp;
                 DateTimeOffset startedUtc = clock.UtcNow;
                 await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, DisposableBranchName(plan.PlanId, target.TargetId, attemptIndex)).ConfigureAwait(false);
-                AdapterExecutionRequest adapterRequest = new(target, workspace, promptPath, adapterOutput, challenge.Limits.TargetTimeoutSeconds);
+                string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, promptPath, target.DisplayName, challenge.SelfChecks ?? []).ConfigureAwait(false);
+                AdapterExecutionRequest adapterRequest = new(target, workspace, workspaceTaskPath, adapterOutput, challenge.Limits.TargetTimeoutSeconds);
                 AdapterExecutionResult adapterResult = target.Adapter.Mode == "process"
                     ? await adapters.RunProcessAdapterAsync(adapterRequest).ConfigureAwait(false)
                     : await adapters.RunContainerAdapterAsync(adapterRequest).ConfigureAwait(false);
@@ -314,7 +315,7 @@ public static class Program
             await git.MaterializeAsync(Path.Combine(challengeRoot, challenge.Workspace.Path), challenge.Workspace.Sha256, challenge.Workspace.BaseCommit, workspace, DisposableBranchName(plan.PlanId, targetId, attemptIndex)).ConfigureAwait(false);
             string promptCopy = Path.Combine(adapterOutput, "prompt.md");
             File.Copy(promptPath, promptCopy, overwrite: true);
-            string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, promptPath, target.DisplayName).ConfigureAwait(false);
+            string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, promptPath, target.DisplayName, challenge.SelfChecks ?? []).ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine($"Attempt {attemptIndex}/{attempts} is ready.");
@@ -329,7 +330,7 @@ public static class Program
             Console.WriteLine("Next steps:");
             Console.WriteLine("1. Use your chosen model or coding-agent UI in the workspace above.");
             Console.WriteLine("2. Ask it to follow AGENTS.md or the task file shown above.");
-            Console.WriteLine("3. Let it run the workspace's available tests or checks when they exist.");
+            Console.WriteLine("3. Let it run the required self-check commands listed in the workspace task file.");
             Console.WriteLine("4. Return here and press Enter when the agent has finished.");
             DateTimeOffset startedUtc = clock.UtcNow;
             long started = clock.Timestamp;
@@ -399,11 +400,12 @@ public static class Program
         return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
     }
 
-    private static async Task<string> WriteInteractiveWorkspaceInstructionsAsync(string workspace, string promptPath, string displayName)
+    private static async Task<string> WriteInteractiveWorkspaceInstructionsAsync(string workspace, string promptPath, string displayName, IReadOnlyList<SelfCheckSpec> selfChecks)
     {
         string prompt = await File.ReadAllTextAsync(promptPath).ConfigureAwait(false);
         string taskPath = Path.Combine(workspace, "MODEL_VALIDATOR_TASK.md");
         string agentsPath = Path.Combine(workspace, "AGENTS.md");
+        string selfCheckContent = BuildSelfCheckMarkdown(selfChecks);
         string taskContent = $"""
             # Model Validator Task
 
@@ -416,6 +418,10 @@ public static class Program
             ## Task
 
             {prompt}
+
+            ## Required Self-Checks
+
+            {selfCheckContent}
             """;
         string agentsContent = $"""
             # Model Validator Workspace Instructions
@@ -425,7 +431,7 @@ public static class Program
             - Read `MODEL_VALIDATOR_TASK.md`.
             - Implement the requested task by editing this workspace only.
             - Do not edit `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
-            - Run the project's available tests or checks before you finish, when the workspace provides them.
+            - Run every command listed under `Required Self-Checks` in `MODEL_VALIDATOR_TASK.md` before you finish.
             - If a check fails, keep working until it passes or record the exact blocker.
             - Do not add repository remotes or credentials.
             - When finished, stop. The human operator will return to the benchmark terminal and press Enter to validate.
@@ -445,6 +451,36 @@ public static class Program
         }
 
         return taskPath;
+    }
+
+    private static string BuildSelfCheckMarkdown(IReadOnlyList<SelfCheckSpec> selfChecks)
+    {
+        if (selfChecks.Count == 0)
+        {
+            return "No challenge-supplied self-check commands are declared. Run the most relevant local build or test command you can identify before finishing.";
+        }
+
+        return string.Join(
+            Environment.NewLine + Environment.NewLine,
+            selfChecks.Select(check =>
+            {
+                string command = string.Join(" ", check.Command.Select(QuoteArgumentForDisplay));
+                return $"""
+                    - {check.Title}
+                      - Working directory: `{check.WorkingDirectory}`
+                      - Command: `{command}`
+                    """;
+            }));
+    }
+
+    private static string QuoteArgumentForDisplay(string argument)
+    {
+        if (argument.Length == 0)
+        {
+            return "\"\"";
+        }
+
+        return argument.Any(char.IsWhiteSpace) ? $"\"{argument.Replace("\"", "\\\"", StringComparison.Ordinal)}\"" : argument;
     }
 
     private static async Task TryOpenWorkspaceAsync(string openTool, string workspace, string promptPath)
@@ -543,7 +579,7 @@ public static class Program
         Directory.CreateDirectory(output);
         string promptCopy = Path.Combine(output, "prompt.md");
         File.Copy(prompt, promptCopy, overwrite: true);
-        string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, prompt, "manual target").ConfigureAwait(false);
+        string workspaceTaskPath = await WriteInteractiveWorkspaceInstructionsAsync(workspace, prompt, "manual target", []).ConfigureAwait(false);
 
         if (openTool is not null)
         {
