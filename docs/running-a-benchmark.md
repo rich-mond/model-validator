@@ -29,7 +29,9 @@ In interactive mode the command pauses after preparing the attempt. It prints th
 1. Use the opened VS Code window, or open the printed workspace manually.
 2. Choose the model in your VS Code extension or coding-agent UI.
 3. Ask the model to follow `AGENTS.md` or `MODEL_VALIDATOR_TASK.md`.
-4. Return to the terminal and press Enter to validate the result.
+4. Let it run the workspace's available tests or checks when they exist.
+5. Return to the terminal and press Enter to validate the result.
+6. Record the actual agent/tool, provider and model shown by the UI.
 
 If `--open vscode` cannot find the VS Code launcher, the benchmark does not crash. It prints the workspace and task file paths so you can open them manually.
 
@@ -118,6 +120,8 @@ It does not receive:
 Only after target execution ends does the framework run the validator container.
 
 For interactive runs, `AGENTS.md` and `MODEL_VALIDATOR_TASK.md` are copied into the materialised workspace so editor-based agents can consume the task naturally. The framework adds both files to `.git/info/exclude` before candidate capture, so they are local run instructions rather than part of the candidate answer.
+
+Interactive runs cannot reliably inspect VS Code or Copilot internals. After the model finishes, the CLI asks you to record what the UI reported. The generated target JSON and `adapter-output/interactive-metadata.json` are updated with those values before validation evidence is written.
 
 ## Outputs
 
