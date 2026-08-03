@@ -98,7 +98,7 @@ public static class Program
         GitWorkspaceManager git = new();
         await git.VerifyBundleAsync(Path.Combine(challengeRoot, manifest.Workspace.Path), manifest.Workspace.Sha256, manifest.Workspace.BaseCommit).ConfigureAwait(false);
         Console.WriteLine("Building validator image and running calibration checks...");
-        ChallengeVerificationResult result = await new ChallengePackVerifier(git).VerifyAsync(challengeRoot).ConfigureAwait(false);
+        ChallengeVerificationResult result = await new ChallengePackVerifier(git).VerifyAsync(challengeRoot, new ConsoleChallengeVerificationProgress()).ConfigureAwait(false);
         JsonIO.Save(Path.Combine(challengeRoot, "verification", "pack-verification.json"), result);
         if (result.Diagnostics.Count > 0)
         {
@@ -116,6 +116,38 @@ public static class Program
         Console.WriteLine($"Oracle stable across three runs: {result.OracleStableAcrossThreeRuns}");
         Console.WriteLine($"Counterexamples checked: {result.CounterexampleFailedAssertions.Count}");
         return 0;
+    }
+
+    private sealed class ConsoleChallengeVerificationProgress : IChallengeVerificationProgress
+    {
+        public void ValidatorImageResolved(string image) => Console.WriteLine($"Validator image ready: {Shorten(image)}");
+
+        public void WorkRootCreated(string path) => Console.WriteLine($"Verification evidence root: {path}");
+
+        public void StageStarted(string id, string? patchPath)
+        {
+            string patch = string.IsNullOrWhiteSpace(patchPath) ? "starter workspace" : Path.GetFileName(patchPath);
+            Console.WriteLine($"Calibration stage: {id} ({patch})");
+        }
+
+        public void PatchApplied(string id, string patchPath) => Console.WriteLine($"  patch applied: {Path.GetFileName(patchPath)}");
+
+        public void AssertionStarted(string stageId, AssertionSpec assertion) => Console.WriteLine($"  running {assertion.Id}...");
+
+        public void AssertionCompleted(string stageId, AssertionRunResult result)
+        {
+            string status = result.Status == AssertionStatus.Passed ? "passed" : result.Status.ToString();
+            Console.WriteLine($"  {result.Id}: {status}; exit {result.ExitCode}; {result.Duration.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+        }
+
+        public void CounterexampleCompleted(string id, IReadOnlyList<string> failedAssertions, IReadOnlyList<string> expectedFailedAssertions)
+        {
+            string failed = failedAssertions.Count == 0 ? "none" : string.Join(", ", failedAssertions);
+            string expected = expectedFailedAssertions.Count == 0 ? "none" : string.Join(", ", expectedFailedAssertions);
+            Console.WriteLine($"  counterexample {id}: failed [{failed}], expected [{expected}]");
+        }
+
+        private static string Shorten(string value) => value.Length <= 24 ? value : value[..24] + "...";
     }
 
     private static async Task<int> RunPlanAsync(string planPath)
