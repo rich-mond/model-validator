@@ -5,6 +5,49 @@ namespace ModelValidator.Execution.Tests;
 
 public sealed class ExecutionTests
 {
+    [Theory]
+    [InlineData(AssertionStatus.Failed, "assertion-failed")]
+    [InlineData(AssertionStatus.TimedOut, "validator-timeout")]
+    [InlineData(AssertionStatus.InfrastructureError, "validation-infrastructure-error")]
+    public void UnsuccessfulValidationNeverIncreasesCoverage(AssertionStatus status, string termination)
+    {
+        AssertionRunResult[] assertions = [new("required", "requirement", true, status, 1, TimeSpan.Zero, "", "")];
+        Assert.Equal(0, Metrics.CalculateCoverage(assertions).RequirementsPassed);
+        Assert.False(Metrics.CalculateCoverage(assertions).Resolved);
+        Assert.Equal(termination, InputVerification.AttemptTermination("completed", assertions));
+        Assert.Equal("target-failed", InputVerification.AttemptTermination("target-failed", assertions));
+        Assert.Equal("target-timeout", InputVerification.AttemptTermination("target-timeout", assertions));
+    }
+
+    [Fact]
+    public void EmptyValidationCannotResolveAnAttempt() => Assert.False(Metrics.CalculateCoverage([]).Resolved);
+
+    [Fact]
+    public void PartialUsageDoesNotInventTotalTokens()
+    {
+        string path = Path.GetTempFileName();
+        File.WriteAllText(path, "{\"inputTokens\":12}");
+        UsageMetrics usage = AdapterRunner.ParseUsage(path);
+        Assert.Equal(12, usage.InputTokens);
+        Assert.Null(usage.OutputTokens);
+        Assert.Null(usage.TotalTokens);
+    }
+
+    [Fact]
+    public void RetentionCleanupPreservesEvidence()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "model-validator-cleanup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "workspace", ".git"));
+        File.WriteAllText(Path.Combine(root, "candidate.patch"), "evidence");
+        string readOnly = Path.Combine(root, "workspace", ".git", "object");
+        File.WriteAllText(readOnly, "object");
+        File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+        InputVerification.DeleteWorkspace(root);
+        Assert.False(Directory.Exists(Path.Combine(root, "workspace")));
+        Assert.Equal("evidence", File.ReadAllText(Path.Combine(root, "candidate.patch")));
+        Assert.Throws<InvalidOperationException>(() => InputVerification.RequireUnusedOutput(root));
+    }
+
     [Fact]
     public async Task ProcessRunnerTimesOutProcessTree()
     {

@@ -5,6 +5,23 @@ namespace ModelValidator.Core.Tests;
 public sealed class CoreTests
 {
     [Fact]
+    public void PlanRejectsUnsupportedParallelism()
+    {
+        BenchmarkPlan plan = new("1.0", "plan", "challenge", ["target.json"], 1, "output", new(2, false));
+        ValidationResult result = ContractValidator.Validate(plan);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, i => i.Path == "execution.maximumParallelTargets");
+    }
+
+    [Fact]
+    public void MissingContractFieldsAreRejectedDuringLoading()
+    {
+        string path = Path.GetTempFileName();
+        File.WriteAllText(path, "{\"schemaVersion\":\"1.0\"}");
+        Assert.Throws<InvalidOperationException>(() => ConfigurationLoader.LoadPlan(path));
+    }
+
+    [Fact]
     public void CanonicalJsonOrdersProperties()
     {
         string digestA = Hashing.Sha256String(JsonIO.Canonicalize("""{"b":2,"a":1}"""));
