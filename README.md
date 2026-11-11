@@ -38,6 +38,8 @@ dotnet restore ModelValidator.slnx --locked-mode
 dotnet build ModelValidator.slnx -c Release
 dotnet test ModelValidator.slnx -c Release --no-build
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path ..\model-validator-challenges\dotnet\idempotent-processing
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path ..\model-validator-challenges\dotnet\checkout-discounts
+
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- challenge verify --path ..\model-validator-challenges\python\order-normalization
 ```
 
@@ -50,6 +52,7 @@ The current public challenge catalog contains:
 | Pack | Language | Task |
 | --- | --- | --- |
 | `dotnet/idempotent-processing` | C# / .NET | Make command processing idempotent under duplicate and concurrent delivery |
+| `dotnet/checkout-discounts` | C# / .NET | Deterministic tier and coupon pricing using an injected clock |
 | `python/order-normalization` | Python | Normalize inbound order events without mutating input |
 
 ## Run A Model
@@ -94,7 +97,7 @@ The generated JSON is saved so the run can be audited or repeated, but users do 
 For unattended automation, pass the agent command after `--`. Use `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}` as placeholders:
 
 ```powershell
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-run -- codex exec --model {model} --sandbox workspace-write --ask-for-approval never {prompt}
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-run -- codex exec --model "{model}" --sandbox workspace-write --ask-for-approval never "{prompt}"
 ```
 
 The target agent receives only the materialised workspace, the prompt and explicitly allowed configuration. It does not receive the validator, oracle patch, counterexamples, Git remotes or repository credentials.
@@ -197,7 +200,7 @@ dotnet run --project .\src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Relea
 
 ## Result Model
 
-Correctness is computed only from validator assertion exit codes.
+Correctness coverage is computed from completed validator assertions. Target failure, target timeout, validator timeout and validation infrastructure failure remain distinct in the recorded termination reason; unsuccessful targets cannot be resolved.
 
 Model Validator does not use:
 
@@ -219,3 +222,11 @@ Elapsed time and correctness are always recorded. Token, request and cost metric
 - [Comparison](docs/comparison.md)
 - [Security](docs/security.md)
 - [Limitations](docs/limitations.md)
+
+Benchmark commands and `plan validate` check the manifest, prompt SHA-256, starter bundle SHA-256 and HEAD identity, and validator context SHA-256 (or the declared digest-pinned image reference) before target execution. Ordinary plan validation does not build images or run agents. Oracle and counterexample calibration belongs to `challenge verify`.
+
+Use `--model-version <reported-version>` when a version is available. Otherwise the version is recorded as `unknown`; model names are never substituted for versions. Interactive metadata and target snapshots retain the values actually recorded for each attempt.
+
+Output directories must be empty or absent. Explicit plans support only `maximumParallelTargets: 1`. `retainWorkspaces: false` deletes each candidate workspace after validation and evidence persistence; patches, inventories, logs, target snapshots and reports remain. Quick automated runs use false; interactive runs use true.
+
+Run the Docker end-to-end regression with `pwsh -File scripts/benchmark-regression.ps1 -ChallengesPath ../model-validator-challenges`. It uses deterministic local commands and a real external pack, without model APIs.

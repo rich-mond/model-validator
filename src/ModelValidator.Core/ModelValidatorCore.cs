@@ -50,7 +50,7 @@ public sealed record ChallengeManifest(
 public sealed record PromptSpec(string Path, string Sha256);
 public sealed record WorkspaceSpec(string Type, string Path, string Sha256, string BaseCommit);
 public sealed record ValidationSpec(ValidatorImageSpec Image, string WorkspacePath, IReadOnlyList<AssertionSpec> Assertions);
-public sealed record ValidatorImageSpec(string Type, string? ContextPath, string? ContainerfilePath, string? ContextSha256, string? Reference);
+public sealed record ValidatorImageSpec(string Type, string? ContextPath = null, string? ContainerfilePath = null, string? ContextSha256 = null, string? Reference = null);
 public sealed record AssertionSpec(string Id, string Title, string Classification, bool Required, IReadOnlyList<string> Command, string WorkingDirectory, int TimeoutSeconds);
 public sealed record SelfCheckSpec(string Id, string Title, IReadOnlyList<string> Command, string WorkingDirectory, int TimeoutSeconds);
 public sealed record ChallengeLimits(int TargetTimeoutSeconds, int ValidatorTimeoutSeconds);
@@ -163,7 +163,10 @@ public static class JsonIO
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = false
+        AllowTrailingCommas = false,
+        UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
+        RespectRequiredConstructorParameters = true,
+        RespectNullableAnnotations = true
     };
 
     public static T Load<T>(string path)
@@ -374,8 +377,11 @@ public static class ContractValidator
         List<ValidationIssue> issues = new();
         Require(target.SchemaVersion == "1.0", "schemaVersion", "must be '1.0'");
         Require(!string.IsNullOrWhiteSpace(target.TargetId), "targetId", "is required");
+        Require(!string.IsNullOrWhiteSpace(target.Agent.Name) && !string.IsNullOrWhiteSpace(target.Agent.Version), "agent", "name and version are required (use unknown when unavailable)");
+        Require(!string.IsNullOrWhiteSpace(target.Model.Name) && !string.IsNullOrWhiteSpace(target.Model.Version) && !string.IsNullOrWhiteSpace(target.Model.Provider), "model", "name, version and provider are required");
+        Require(target.TargetId is not "." and not ".." && !Path.IsPathRooted(target.TargetId) && target.TargetId.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && target.TargetId.IndexOfAny(['/', '\\', ':']) < 0, "targetId", "must be a single path segment");
         Require(target.Adapter.Mode is "container" or "process", "adapter.mode", "must be 'container' or 'process'");
-        Require(target.Adapter.Command.Count > 0 && target.Adapter.Command.All(c => !string.IsNullOrWhiteSpace(c)), "adapter.command", "must be a non-empty argument array");
+        Require(target.Adapter.Command.Count > 0 && !string.IsNullOrWhiteSpace(target.Adapter.Command[0]), "adapter.command", "must be a non-empty argument array");
         if (target.Adapter.Mode == "container")
         {
             Require(target.Adapter.Image?.Contains("@sha256:", StringComparison.Ordinal) == true, "adapter.image", "container image must be digest pinned");
@@ -403,9 +409,11 @@ public static class ContractValidator
         if (plan.SchemaVersion != "1.0") issues.Add(new("schemaVersion", "must be '1.0'"));
         if (string.IsNullOrWhiteSpace(plan.PlanId)) issues.Add(new("planId", "is required"));
         if (string.IsNullOrWhiteSpace(plan.ChallengePath)) issues.Add(new("challengePath", "is required"));
+        if (string.IsNullOrWhiteSpace(plan.OutputPath)) issues.Add(new("outputPath", "is required"));
+        if (plan.Targets.Any(string.IsNullOrWhiteSpace)) issues.Add(new("targets", "references must be nonempty"));
         if (plan.Targets.Count == 0) issues.Add(new("targets", "must contain at least one target"));
         if (plan.AttemptsPerTarget < 1) issues.Add(new("attemptsPerTarget", "must be at least 1"));
-        if (plan.Execution.MaximumParallelTargets < 1) issues.Add(new("execution.maximumParallelTargets", "must be at least 1"));
+        if (plan.Execution.MaximumParallelTargets != 1) issues.Add(new("execution.maximumParallelTargets", "only 1 is supported; parallel execution is unavailable"));
         return new(issues.Count == 0, issues);
     }
 
@@ -423,7 +431,7 @@ public static class Metrics
         int reqPass = values.Count(a => a.Classification == "requirement" && a.Required && a.Status == AssertionStatus.Passed);
         int regTotal = values.Count(a => a.Classification == "regression" && a.Required);
         int regPass = values.Count(a => a.Classification == "regression" && a.Required && a.Status == AssertionStatus.Passed);
-        return new(reqPass, reqTotal, Percent(reqPass, reqTotal), regPass, regTotal, Percent(regPass, regTotal), reqPass == reqTotal && regPass == regTotal);
+        return new(reqPass, reqTotal, Percent(reqPass, reqTotal), regPass, regTotal, Percent(regPass, regTotal), values.Length > 0 && reqPass == reqTotal && regPass == regTotal);
     }
 
     private static decimal Percent(int passed, int total) => total == 0 ? 100m : decimal.Round(passed * 100m / total, 2);

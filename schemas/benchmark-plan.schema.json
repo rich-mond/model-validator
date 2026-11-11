@@ -16,7 +16,7 @@
       "required": [ "maximumParallelTargets", "retainWorkspaces" ],
       "additionalProperties": false,
       "properties": {
-        "maximumParallelTargets": { "type": "integer", "minimum": 1 },
+        "maximumParallelTargets": { "type": "integer", "const": 1 },
         "retainWorkspaces": { "type": "boolean" }
       }
     }

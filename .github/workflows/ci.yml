@@ -15,10 +15,47 @@ jobs:
       - name: Restore
         run: dotnet restore ModelValidator.slnx --locked-mode
       - name: Build
-        run: dotnet build ModelValidator.slnx -c Release --no-restore
+        run: dotnet build ModelValidator.slnx -c Release --no-restore -warnaserror
       - name: Test
         run: dotnet test ModelValidator.slnx -c Release --no-build
       - name: Dependency inventory
         run: dotnet list ModelValidator.slnx package --include-transitive
       - name: Vulnerability scan
         run: dotnet list ModelValidator.slnx package --vulnerable --include-transitive
+
+  benchmark-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: model-validator
+      - uses: actions/checkout@v4
+        with:
+          repository: rich-mond/model-validator-challenges
+          # Qualified pack inputs; full catalogue calibration belongs to its own CI.
+          ref: a87f80672287425ea4b181fe5d5778e070e77c48
+          path: model-validator-challenges
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: model-validator/global.json
+      - name: Record revisions
+        run: |
+          echo "Framework: $(git -C model-validator rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Challenges: $(git -C model-validator-challenges rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore
+        working-directory: model-validator
+        run: dotnet restore ModelValidator.slnx --locked-mode
+      - name: Build
+        working-directory: model-validator
+        run: dotnet build ModelValidator.slnx -c Release --no-restore -warnaserror
+      - name: Deterministic benchmark regression
+        shell: pwsh
+        working-directory: model-validator
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: ./scripts/benchmark-regression.ps1 -ChallengesPath ../model-validator-challenges
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-regression-evidence
+          path: ${{ runner.temp }}/model-validator-e2e-*

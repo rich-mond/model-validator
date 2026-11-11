@@ -99,6 +99,14 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "modelvalidator.cli": {
+        "type": "Project",
+        "dependencies": {
+          "ModelValidator.Core": "[1.0.0, )",
+          "ModelValidator.Execution": "[1.0.0, )",
+          "ModelValidator.Reporting": "[1.0.0, )"
+        }
+      },
       "modelvalidator.core": {
         "type": "Project"
       },

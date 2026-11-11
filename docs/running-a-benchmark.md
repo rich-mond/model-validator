@@ -39,7 +39,7 @@ If `--open vscode` cannot find the VS Code launcher, the benchmark does not cras
 Automated CLI mode:
 
 ```powershell
-dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-idempotency -- codex exec --model {model} --sandbox workspace-write --ask-for-approval never {prompt}
+dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- benchmark --challenge ..\model-validator-challenges\dotnet\idempotent-processing --agent codex-cli --provider openai --model gpt-5 --output ..\model-validator-runs\codex-cli-idempotency -- codex exec --model "{model}" --sandbox workspace-write --ask-for-approval never "{prompt}"
 ```
 
 Supported placeholders after `--` are `{prompt}`, `{promptPath}`, `{workspace}`, `{output}` and `{model}`.
@@ -159,3 +159,15 @@ To print the persisted Markdown or JSON reports instead:
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- report --run ..\model-validator-runs\order-normalization-vscode --format markdown
 dotnet run --project src\ModelValidator.Cli\ModelValidator.Cli.csproj -c Release -- report --run ..\model-validator-runs\order-normalization-vscode --format json
 ```
+
+## Verified inputs and execution settings
+
+All benchmark entrypoints verify the immutable pack inputs before writing snapshots or executing a target. `plan validate` also loads every target, rejects duplicate target IDs and rejects unsupported parallelism without building containers. Existing-image declarations must be digest pinned; Docker resolves their contents at execution. Full oracle/counterexample qualification runs separately through `challenge verify`.
+
+`maximumParallelTargets` must equal 1. With `retainWorkspaces: false`, the workspace is removed only after candidate capture, validation and result persistence. Evidence and a target configuration snapshot survive cleanup. Automated quick runs use false; interactive runs use true. To repeat a plan, choose a new empty output directory: existing run content is rejected.
+
+Agent and model identities have separate name and version fields. Supply `--agent-version` and `--model-version` when known; both default to `unknown`. Leaving the interactive version blank preserves `unknown` when no version was supplied.
+
+Target duration ends when the target exits, or when the interactive operator presses Enter, before metadata entry. Capture and validation have separate monotonic durations. Total duration and UTC start/finish encompass the complete attempt, including preparation and interactive metadata entry.
+
+The framework reports a completed run even when a candidate is unresolved. Inspect `coverage.resolved`, assertion statuses and `terminationReason`, or the console/Markdown summary, for candidate outcomes.

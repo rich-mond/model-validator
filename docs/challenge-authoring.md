@@ -41,3 +41,5 @@ The oracle patch and counterexamples are for challenge-pack verification. They p
 - known-invalid candidates fail the expected assertions.
 
 They are not mounted into target-agent workspaces and are not used to compute candidate correctness during a benchmark run.
+
+Qualification enforces every counterexample's declared expected failures. Timeouts and infrastructure failures cannot serve as counterexample evidence. Each assertion must compare actual candidate results in a trusted supervisor; exit zero from a process that loads candidate code is insufficient. Pack CI pins a qualified framework commit and records both repository revisions. The catalog owns complete three-pack calibration; framework CI runs a single-pack deterministic benchmark regression.

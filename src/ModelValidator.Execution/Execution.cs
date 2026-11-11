@@ -57,6 +57,12 @@ public sealed class ProcessRunner
             try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
 
         string stdout = await stdoutTask.ConfigureAwait(false);
         string stderr = await stderrTask.ConfigureAwait(false);
@@ -94,7 +100,9 @@ public sealed class GitWorkspaceManager
             throw new InvalidOperationException($"Git bundle verification failed: {verify.StandardError}{verify.StandardOutput}");
         }
 
-        _ = baseCommit;
+        ProcessResult heads = await GitAsync(Path.GetDirectoryName(Path.GetFullPath(bundlePath))!, ["bundle", "list-heads", Path.GetFullPath(bundlePath), "HEAD"], cancellationToken).ConfigureAwait(false);
+        if (heads.ExitCode != 0 || !heads.StandardOutput.StartsWith(baseCommit + " HEAD", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Starter bundle HEAD does not match workspace.baseCommit.");
     }
 
     public async Task<string> MaterializeAsync(string bundlePath, string expectedSha256, string baseCommit, string destination, string branchName, CancellationToken cancellationToken = default)
@@ -247,6 +255,7 @@ public sealed class GitWorkspaceManager
         ["TEMP"] = Environment.GetEnvironmentVariable("TEMP"),
         ["TMP"] = Environment.GetEnvironmentVariable("TMP"),
         ["COMSPEC"] = Environment.GetEnvironmentVariable("COMSPEC"),
+        ["PATHEXT"] = Environment.GetEnvironmentVariable("PATHEXT"),
         ["HOME"] = null,
         ["GIT_TERMINAL_PROMPT"] = "0"
     };
@@ -271,17 +280,17 @@ public sealed class AdapterRunner
             environment[variable] = Environment.GetEnvironmentVariable(variable);
         }
 
-        List<string> args = target.Adapter.Command.Skip(1)
-            .Concat(["--workspace", workspace, "--prompt", promptPath, "--output", outputPath])
-            .ToList();
-        ProcessResult result = await runner.RunAsync(new(target.Adapter.Command[0], args, workspace, environment, TimeSpan.FromSeconds(request.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
+        List<string> args = target.Adapter.Command.Skip(1).ToList();
+        int separator = args.IndexOf("--");
+        args.InsertRange(separator < 0 ? args.Count : separator, ["--workspace", workspace, "--prompt", promptPath, "--output", outputPath]);
+        ProcessResult result = await RunTargetAsync(new(target.Adapter.Command[0], args, workspace, environment, TimeSpan.FromSeconds(request.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
         string[] secretValues = target.Environment.SecretVariables.Select(Environment.GetEnvironmentVariable).Where(v => !string.IsNullOrEmpty(v)).Select(v => v!).ToArray();
         ProcessResult redacted = result with
         {
             StandardOutput = SecretRedactor.Redact(result.StandardOutput, secretValues),
             StandardError = SecretRedactor.Redact(result.StandardError, secretValues)
         };
-        return new(redacted, false, ParseUsage(Path.Combine(outputPath, "usage.json")), redacted.TimedOut ? "timed-out" : "completed");
+        return new(redacted, false, ParseUsage(Path.Combine(outputPath, "usage.json")), TargetTermination(redacted));
     }
 
     public async Task<AdapterExecutionResult> RunContainerAdapterAsync(AdapterExecutionRequest request, CancellationToken cancellationToken = default)
@@ -294,11 +303,33 @@ public sealed class AdapterRunner
 
         Directory.CreateDirectory(request.OutputPath);
         List<string> args = BuildContainerArguments(request);
-        ProcessResult result = await runner.RunAsync(new("docker", args, Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(request.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
+        string containerName = "model-validator-target-" + Guid.NewGuid().ToString("N");
+        args.InsertRange(1, ["--name", containerName]);
+        ProcessResult result;
+        try
+        {
+            result = await RunTargetAsync(new("docker", args, Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(request.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
+            if (result.TimedOut) await RemoveContainerAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            await RemoveContainerAsync().ConfigureAwait(false);
+            throw;
+        }
         string[] secretValues = target.Environment.SecretVariables.Select(Environment.GetEnvironmentVariable).Where(v => !string.IsNullOrEmpty(v)).Select(v => v!).ToArray();
         ProcessResult redacted = result with { StandardOutput = SecretRedactor.Redact(result.StandardOutput, secretValues), StandardError = SecretRedactor.Redact(result.StandardError, secretValues) };
-        return new(redacted, true, ParseUsage(Path.Combine(request.OutputPath, "usage.json")), redacted.TimedOut ? "timed-out" : "completed");
+        return new(redacted, true, ParseUsage(Path.Combine(request.OutputPath, "usage.json")), TargetTermination(redacted));
+
+        Task<ProcessResult> RemoveContainerAsync() => runner.RunAsync(new("docker", ["rm", "-f", containerName], Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(30)), CancellationToken.None);
     }
+
+    private async Task<ProcessResult> RunTargetAsync(ProcessRequest request, CancellationToken cancellationToken)
+    {
+        try { return await runner.RunAsync(request, cancellationToken).ConfigureAwait(false); }
+        catch (System.ComponentModel.Win32Exception ex) { return new(127, false, TimeSpan.Zero, string.Empty, ex.Message); }
+    }
+
+    private static string TargetTermination(ProcessResult result) => result.TimedOut ? "target-timeout" : result.ExitCode != 0 ? "target-failed" : "completed";
 
     public static List<string> BuildContainerArguments(AdapterExecutionRequest request)
     {
@@ -345,7 +376,7 @@ public sealed class AdapterRunner
             long? input = ReadLong(root, "inputTokens");
             long? cached = ReadLong(root, "cachedInputTokens");
             long? output = ReadLong(root, "outputTokens");
-            return new(input, cached, output, input.HasValue || output.HasValue ? (input ?? 0) + (output ?? 0) : null, ReadLong(root, "requests"), ReadDecimal(root, "providerReportedCost"), ReadString(root, "currency"));
+            return new(input, cached, output, input.HasValue && output.HasValue ? input + output : null, ReadLong(root, "requests"), ReadDecimal(root, "providerReportedCost"), ReadString(root, "currency"));
         }
         catch (JsonException)
         {
@@ -387,7 +418,9 @@ public sealed class ValidatorRunner
         }
 
         ProcessResult inspect = await runner.RunAsync(new("docker", ["image", "inspect", tag, "--format", "{{.Id}}"], challengeRoot, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromMinutes(1)), cancellationToken).ConfigureAwait(false);
-        return inspect.StandardOutput.Trim().Length == 0 ? tag : inspect.StandardOutput.Trim();
+        if (inspect.ExitCode != 0 || string.IsNullOrWhiteSpace(inspect.StandardOutput))
+            throw new InvalidOperationException($"Validator image inspect failed: {inspect.StandardError}");
+        return inspect.StandardOutput.Trim();
     }
 
     public async Task<AssertionRunResult> RunAssertionAsync(string image, string candidateWorkspace, string workspacePath, AssertionSpec assertion, string outputDirectory, CancellationToken cancellationToken = default)
@@ -401,12 +434,29 @@ public sealed class ValidatorRunner
             image
         ];
         args.AddRange(assertion.Command);
-        ProcessResult result = await runner.RunAsync(new("docker", args, Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(assertion.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
+        string containerName = "model-validator-assertion-" + Guid.NewGuid().ToString("N");
+        args.InsertRange(1, ["--name", containerName]);
+        ProcessResult result;
+        try
+        {
+            result = await runner.RunAsync(new("docker", args, Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(assertion.TimeoutSeconds)), cancellationToken).ConfigureAwait(false);
+            if (result.TimedOut)
+                await runner.RunAsync(new("docker", ["rm", "-f", containerName], Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(30)), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            result = new(125, false, TimeSpan.Zero, string.Empty, ex.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            await runner.RunAsync(new("docker", ["rm", "-f", containerName], Environment.CurrentDirectory, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(30)), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
         string stdoutPath = Path.Combine(outputDirectory, "stdout.log");
         string stderrPath = Path.Combine(outputDirectory, "stderr.log");
         await File.WriteAllTextAsync(stdoutPath, result.StandardOutput, cancellationToken).ConfigureAwait(false);
         await File.WriteAllTextAsync(stderrPath, result.StandardError, cancellationToken).ConfigureAwait(false);
-        AssertionStatus status = result.TimedOut ? AssertionStatus.TimedOut : result.ExitCode == 0 ? AssertionStatus.Passed : AssertionStatus.Failed;
+        AssertionStatus status = result.TimedOut ? AssertionStatus.TimedOut : result.ExitCode is 125 or 126 or 127 ? AssertionStatus.InfrastructureError : result.ExitCode == 0 ? AssertionStatus.Passed : AssertionStatus.Failed;
         AssertionRunResult assertionResult = new(assertion.Id, assertion.Classification, assertion.Required, status, result.ExitCode, result.Duration, stdoutPath, stderrPath);
         JsonIO.Save(Path.Combine(outputDirectory, "result.json"), assertionResult);
         return assertionResult;
@@ -439,14 +489,8 @@ public sealed class ChallengePackVerifier
 
     public async Task<ChallengeVerificationResult> VerifyAsync(string challengeRoot, IChallengeVerificationProgress? progress = null, CancellationToken cancellationToken = default)
     {
-        ChallengeManifest manifest = ConfigurationLoader.LoadChallenge(Path.Combine(challengeRoot, "challenge.json"));
-        if (Hashing.Sha256File(Path.Combine(challengeRoot, manifest.Prompt.Path)) != manifest.Prompt.Sha256)
-        {
-            throw new InvalidOperationException("Prompt digest mismatch.");
-        }
-
+        ChallengeManifest manifest = await InputVerification.ChallengeAsync(challengeRoot, cancellationToken).ConfigureAwait(false);
         string bundlePath = Path.Combine(challengeRoot, manifest.Workspace.Path);
-        await git.VerifyBundleAsync(bundlePath, manifest.Workspace.Sha256, manifest.Workspace.BaseCommit, cancellationToken).ConfigureAwait(false);
         string image = await validator.ResolveImageAsync(challengeRoot, manifest.Validation.Image, cancellationToken).ConfigureAwait(false);
         progress?.ValidatorImageResolved(image);
         string workRoot = Path.Combine(Path.GetTempPath(), "model-validator-challenge-verify-" + Guid.NewGuid().ToString("N"));
@@ -458,6 +502,7 @@ public sealed class ChallengePackVerifier
         IReadOnlyList<AssertionRunResult> oracle2 = await MaterializePatchAndValidateAsync("oracle-2", Path.Combine(challengeRoot, "oracle", "solution.patch")).ConfigureAwait(false);
         IReadOnlyList<AssertionRunResult> oracle3 = await MaterializePatchAndValidateAsync("oracle-3", Path.Combine(challengeRoot, "oracle", "solution.patch")).ConfigureAwait(false);
 
+        List<string> diagnostics = new();
         Dictionary<string, IReadOnlyList<string>> counterexampleFailures = new(StringComparer.Ordinal);
         string counterexampleManifestPath = Path.Combine(challengeRoot, "counterexamples", "manifest.json");
         if (File.Exists(counterexampleManifestPath))
@@ -468,6 +513,11 @@ public sealed class ChallengePackVerifier
                 IReadOnlyList<AssertionRunResult> results = await MaterializePatchAndValidateAsync("counterexample-" + counterexample.Id, Path.Combine(challengeRoot, "counterexamples", counterexample.Path)).ConfigureAwait(false);
                 string[] failedAssertions = results.Where(r => r.Status != AssertionStatus.Passed).Select(r => r.Id).ToArray();
                 counterexampleFailures[counterexample.Id] = failedAssertions;
+                foreach (string expected in counterexample.ExpectedFailedAssertions)
+                    if (!results.Any(r => r.Id == expected && r.Status == AssertionStatus.Failed))
+                        diagnostics.Add($"Counterexample '{counterexample.Id}' did not fail assertion '{expected}'.");
+                if (results.Any(r => r.Status is AssertionStatus.InfrastructureError or AssertionStatus.TimedOut))
+                    diagnostics.Add($"Counterexample '{counterexample.Id}' encountered timeout or infrastructure failure.");
                 progress?.CounterexampleCompleted(counterexample.Id, failedAssertions, counterexample.ExpectedFailedAssertions);
             }
         }
@@ -475,7 +525,7 @@ public sealed class ChallengePackVerifier
         bool starterFailed = starter.Any(a => a.Required && a.Classification == "requirement" && a.Status != AssertionStatus.Passed);
         bool oraclePassed = oracle1.All(a => !a.Required || a.Status == AssertionStatus.Passed);
         bool oracleStable = StatusSignature(oracle1) == StatusSignature(oracle2) && StatusSignature(oracle2) == StatusSignature(oracle3);
-        List<string> diagnostics = new();
+        if (starter.Any(r => r.Status is AssertionStatus.InfrastructureError or AssertionStatus.TimedOut)) diagnostics.Add("Starter validation did not complete normally.");
         if (!starterFailed) diagnostics.Add("starter did not fail any required assertion");
         if (!oraclePassed) diagnostics.Add("oracle did not pass every required assertion");
         if (!oracleStable) diagnostics.Add("oracle results were not stable across three runs");
