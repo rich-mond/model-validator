@@ -43,6 +43,32 @@ public sealed class CliRegressionTests
         Assert.Contains("No agent command", result.StandardError, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ManualAdapterRejectsInterruptedInput()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "model-validator-manual-" + Guid.NewGuid().ToString("N"));
+        string workspace = Path.Combine(root, "workspace");
+        Directory.CreateDirectory(workspace);
+        ProcessResult init = await new ProcessRunner().RunAsync(new("git", ["init"], workspace, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromSeconds(20)));
+        Assert.Equal(0, init.ExitCode);
+        string prompt = Path.Combine(root, "prompt.md");
+        File.WriteAllText(prompt, "task");
+        System.Diagnostics.ProcessStartInfo info = new("dotnet")
+        {
+            UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (string argument in new[] { FindCli(), "adapter", "manual", "--workspace", workspace, "--prompt", prompt, "--output", Path.Combine(root, "output") })
+            info.ArgumentList.Add(argument);
+        using System.Diagnostics.Process process = System.Diagnostics.Process.Start(info)!;
+        process.StandardInput.Close();
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await stdout;
+        Assert.Equal(1, process.ExitCode);
+        Assert.Contains("interrupted", await stderr, StringComparison.Ordinal);
+    }
+
     private static string FindCli()
     {
         string root = AppContext.BaseDirectory;

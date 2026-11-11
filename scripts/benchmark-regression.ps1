@@ -193,3 +193,4 @@ try {
     Check ($diagnostic.Contains('Git: FAILED') -and $diagnostic.Contains('Docker CLI: FAILED')) 'Doctor concealed missing prerequisites'
 } finally { $env:PATH = $savedPath }
 Write-Host 'Deterministic benchmark regression passed.'
+exit 0

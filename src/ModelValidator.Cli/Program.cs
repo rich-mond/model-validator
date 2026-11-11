@@ -681,7 +681,7 @@ public static class Program
         Console.WriteLine($"Workspace: {workspace}");
         Console.WriteLine($"Task file: {workspaceTaskPath}");
         Console.WriteLine("Run the agent/model of your choice in the workspace, then press Enter here to continue.");
-        _ = Console.ReadLine();
+        if (Console.ReadLine() is null) throw new InvalidOperationException("Manual target was interrupted before completion.");
         JsonIO.Save(Path.Combine(output, "usage.json"), new UsageMetrics(null, null, null, null, null, null, null));
         return 0;
     }
