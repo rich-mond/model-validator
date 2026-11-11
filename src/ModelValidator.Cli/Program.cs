@@ -194,6 +194,7 @@ public static class Program
         ValidatorRunner validators = new();
         SystemClock clock = new();
         string validatorImage = await validators.ResolveImageAsync(challengeRoot, challenge.Validation.Image).ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(outputRoot, "validator-image.txt"), validatorImage).ConfigureAwait(false);
         fingerprint = Fingerprints.Challenge(challenge, Hashing.Sha256File(Path.Combine(challengeRoot, "challenge.json")), validatorImage, plan.Execution);
 
         foreach (string targetPath in plan.Targets)
@@ -373,6 +374,7 @@ public static class Program
         ValidatorRunner validators = new();
         SystemClock clock = new();
         string validatorImage = await validators.ResolveImageAsync(challengeRoot, challenge.Validation.Image).ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(outputRoot, "validator-image.txt"), validatorImage).ConfigureAwait(false);
         string fingerprint = Fingerprints.Challenge(challenge, Hashing.Sha256File(Path.Combine(challengeRoot, "challenge.json")), validatorImage, plan.Execution);
         List<AttemptResult> results = new();
         TargetConfiguration recordedTarget = target;

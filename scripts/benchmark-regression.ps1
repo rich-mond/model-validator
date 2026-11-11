@@ -88,12 +88,16 @@ $plan.targets = @((Join-Path $root 'missing-target.json'))
 $plan | ConvertTo-Json -Depth 50 | Set-Content $planPath
 $null = Invoke-Cli @('plan','validate','--path',$planPath) 1
 
-foreach ($inputFile in @('prompt.md','workspace/starter.bundle','validator/run','base-commit')) {
+foreach ($inputFile in @('prompt.md','workspace/starter.bundle','validator/run','base-commit','outside-containerfile')) {
     $copy = Join-Path $root ('corrupt-' + $inputFile.Replace('/','-'))
     Copy-Item $pack $copy -Recurse
     if ($inputFile -eq 'base-commit') {
         $manifest = Get-Content (Join-Path $copy 'challenge.json') -Raw | ConvertFrom-Json
         $manifest.workspace.baseCommit = 'a' * 40
+        $manifest | ConvertTo-Json -Depth 50 | Set-Content (Join-Path $copy 'challenge.json')
+    } elseif ($inputFile -eq 'outside-containerfile') {
+        $manifest = Get-Content (Join-Path $copy 'challenge.json') -Raw | ConvertFrom-Json
+        $manifest.validation.image.containerfilePath = 'prompt.md'
         $manifest | ConvertTo-Json -Depth 50 | Set-Content (Join-Path $copy 'challenge.json')
     } else { Add-Content (Join-Path $copy $inputFile) 'corrupted' }
     $output = Join-Path $root ('rejected-' + $inputFile.Replace('/','-'))

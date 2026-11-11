@@ -410,8 +410,14 @@ public sealed class ValidatorRunner
             throw new InvalidOperationException($"Validator context digest mismatch. Expected {expected}, got {actual}.");
         }
 
-        string tag = $"model-validator-validator-{Hashing.Sha256String(context)[..12]}";
-        ProcessResult build = await runner.RunAsync(new("docker", ["build", "-f", Path.Combine(challengeRoot, image.ContainerfilePath ?? ""), "-t", tag, context], challengeRoot, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromMinutes(20)), cancellationToken).ConfigureAwait(false);
+        string containerfile = Path.Combine(challengeRoot, image.ContainerfilePath ?? "");
+        string relativeContainerfile = Path.GetRelativePath(context, containerfile).Replace('\\', '/');
+        string tag = $"model-validator-validator-{Hashing.Sha256String(actual + ":" + relativeContainerfile)}";
+        // Rebuilding even a cached context can generate a new image identity (for example
+        // BuildKit provenance timestamps). Reuse the image for these verified inputs.
+        ProcessResult cached = await runner.RunAsync(new("docker", ["image", "inspect", tag, "--format", "{{.Id}}"], challengeRoot, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromMinutes(1)), cancellationToken).ConfigureAwait(false);
+        if (cached.ExitCode == 0 && !string.IsNullOrWhiteSpace(cached.StandardOutput)) return cached.StandardOutput.Trim();
+        ProcessResult build = await runner.RunAsync(new("docker", ["build", "-f", containerfile, "-t", tag, context], challengeRoot, GitWorkspaceManager.BaseEnvironment(), TimeSpan.FromMinutes(20)), cancellationToken).ConfigureAwait(false);
         if (build.ExitCode != 0)
         {
             throw new InvalidOperationException($"Validator image build failed: {build.StandardError}{build.StandardOutput}");

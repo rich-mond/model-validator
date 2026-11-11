@@ -16,6 +16,9 @@ public static class InputVerification
             string context = Path.Combine(root, image.ContextPath!);
             if (!Directory.Exists(context) || !File.Exists(Path.Combine(root, image.ContainerfilePath!)))
                 throw new InvalidOperationException("Validator context or Containerfile is missing.");
+            string containerfile = Path.GetRelativePath(context, Path.Combine(root, image.ContainerfilePath!)).Replace('\\', '/');
+            if (containerfile == ".." || containerfile.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(containerfile))
+                throw new InvalidOperationException("Validator Containerfile must be inside the verified context.");
             if (!string.Equals(Hashing.Sha256Directory(context), image.ContextSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Validator context digest mismatch.");
         }
